@@ -29,18 +29,18 @@ class NeighborhoodInformationTest extends FunSuite with BeforeAndAfterAll {
       .fit(df)
     val cleanedDf = rf.transform(df).select("label", "features")
     cleanedDf.show()
-    val test = spark.range(1000,1100).toDF().withColumn("x",col("id") + 100)
+    val test = spark.range(10,20).toDF().withColumn("x",col("id") + 10)
       .withColumn("l",rand()>0.5)
     test.show()
-    val rf1 = new RFormula().setFormula("l ~ x + id").fit(test)
-    val cleanedTest = rf1.transform(test).select("label", "features").repartition(10)
-    val rot = NeighborhoodInformation.rotateDFasRDD(cleanedTest)
+    val rf1 = new RFormula().setFormula("l ~ x + id + x : id").fit(test)
+    val cleanedTest = rf1.transform(test).select("label", "features").repartition(4)
+    val rot = NeighborhoodInformation.rotateDFasRDD(cleanedTest,2)
 //    rot.foreach{case (i, array) => println(i+" "+array.mkString("[",",","]"))}
     rot.collectPartitions().foreach(a=>{
-      a.foreach(pair=>println(pair._1 +"\t"+ pair._2.mkString(",")))
+//      a.foreach(pair=>println(pair._1 +"\t"+ pair._2.mkString(",")))
+      a.foreach{case (c, v) => println(c+"\t"+v.mkString(",")) }
       println()
     })
-    rot.mapPartitions()
   }
 
   ignore("test"){

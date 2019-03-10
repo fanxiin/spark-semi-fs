@@ -1,23 +1,59 @@
 package org.apache.spark.ml.feature
 
 import org.apache.spark.Partitioner
-import org.apache.spark.ml.attribute.{AttributeGroup, NominalAttribute}
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.ml.linalg.Vector
 import org.apache.spark.storage.StorageLevel
+import breeze.linalg.{DenseMatrix => BDM}
 
 class NeighborhoodInformation(
     val delta: Double,
-    val nominalIndices: Set[Int]) {
+    dataset: RDD[(Int, Array[Double])],
+    val bLabels: Broadcast[Array[Byte]],
+    val numLabels: Int,
+    val nominalIndices: Broadcast[Set[Int]]) {
   type DataFormat
 
   private def computeContingencyTable(
-      data: RDD[DataFormat]
   )= ???
+
+  private def mutualInformation(
+      iterA: Iterator[Double],
+      iterB: Iterator[Double]): Double = {
+
+    ???
+  }
+
+  val attrsNumValues = {
+    val counts = dataset.filter(pair => nominalIndices.value.contains(pair._1))
+      .map(pair => (pair._1, (pair._2.max + 1).asInstanceOf[Int]))
+    dataset.context.broadcast(counts.collect().toMap)
+  }
+
+  val relevance = {
+    val numClass = numLabels
+    dataset.map{
+      case (col, values) if nominalIndices.value.contains(col) =>
+        val labels = bLabels.value
+        val numX = attrsNumValues.value.getOrElse(col, throw new Exception("require nominal attribute"))
+//        val dm = Array.ofDim(numX,numClass)
+        val contingency = new BDM(numX, numClass, new Array[Double](numX * numClass))
+        values.zip(labels).foreach {case (x, c) =>
+            contingency(x.asInstanceOf[Int],c) += 1
+        }
+
+      case (col, values) if !nominalIndices.value.contains(col) =>
+        val labels = bLabels.value
+        val numX = attrsNumValues.value.getOrElse(col, throw new Exception("require nominal attribute"))
+        values.zip(labels).foreach()
+
+    }
+  }
 }
 
-object NeighborhoodInformation{
+object NeighborhoodInformationHelper{
   type DataFormat = (Int, Array[Double])
   def rotateRDD(data: RDD[LabeledPoint], numPartitions: Int = 0): RDD[DataFormat] = {
     val oldPartitions = data.getNumPartitions
@@ -44,7 +80,7 @@ object NeighborhoodInformation{
     denseData
   }
 
-  def rotateDFasRDD(df: DataFrame): RDD[DataFormat] = {
+  def rotateDFasRDD(df: DataFrame, numPartitions: Int): RDD[(Int, Array[Double])] = {
     val oldPartitions = df.rdd.getNumPartitions
     val numElements = df.count
     val numAttributes = df.first().getAs[Vector](1).size + 1
@@ -60,13 +96,25 @@ object NeighborhoodInformation{
         mat(dv.size)(j) = label
         j += 1
       }
-      val chunks = for (i <- 0 until numAttributes) yield (i * oldPartitions + pIndex, mat(i))
+      val chunks = for (i <- 0 until numAttributes) yield (ColumnTransferKey(i, pIndex), mat(i)) //不使用三元组节省减小传输时间？
       chunks.toIterator
     }
-    val numChunks = oldPartitions * numAttributes
-    columnarRDD.sortByKey()
-      .partitionBy(new ColumnPartition(numAttributes, numChunks))
-      .persist(StorageLevel.MEMORY_ONLY)
+    implicit def orderByColumnTransferKey[A <: ColumnTransferKey] : Ordering[A] =
+      Ordering.by(k => (k.colIndex, k.partIndex))
+    columnarRDD.repartitionAndSortWithinPartitions(new ColumnTransferPartitioner(numPartitions))
+      .map(pair => (pair._1.colIndex, pair._2))
+      .mapPartitions(iter => {
+        iter.toArray.groupBy(_._1).map(pair => (pair._1,pair._2.map(_._2).flatten)).toIterator
+      }).persist(StorageLevel.MEMORY_ONLY)
+  }
+}
+
+case class ColumnTransferKey(colIndex: Int, partIndex: Int)
+
+class ColumnTransferPartitioner(override val numPartitions: Int) extends Partitioner{
+  override def getPartition(key: Any): Int = {
+    val k = key.asInstanceOf[ColumnTransferKey]
+    k.colIndex / numPartitions
   }
 }
 
