@@ -8,6 +8,9 @@ import org.apache.spark.ml.linalg.Vector
 import org.apache.spark.storage.StorageLevel
 import breeze.linalg.{DenseMatrix => BDM}
 
+import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
+
 class NeighborhoodInformation(
     val delta: Double,
     dataset: RDD[(Int, Array[Double])],
@@ -34,6 +37,7 @@ class NeighborhoodInformation(
 
   val relevance = {
     val numClass = numLabels
+    val delat_ = delta
     dataset.map{
       case (col, values) if nominalIndices.value.contains(col) =>
         val labels = bLabels.value
@@ -47,7 +51,29 @@ class NeighborhoodInformation(
       case (col, values) if !nominalIndices.value.contains(col) =>
         val labels = bLabels.value
         val numX = attrsNumValues.value.getOrElse(col, throw new Exception("require nominal attribute"))
-        values.zip(labels).foreach()
+        val x = values.zip(labels).foldLeft(mutable.Map.empty[Byte, ArrayBuffer[Double]]){
+          case (m, c) =>
+            val buf = m.getOrElseUpdate(c._2, new ArrayBuffer[Double])
+            buf += c._1
+            m
+        }
+        x.flatMap { case (_, v) =>
+            val sortedV = v.sorted
+            var lower = 0
+            var upper = sortedV.head + delat_
+            var current = sortedV.head
+            var i = 0
+            while (sortedV(i) < upper) {
+              i += 1
+            }
+            var counter = i
+            for (i <- counter until sortedV.size)
+              yield {
+                val n_upper = sortedV(i) + delat_
+              }
+            ???
+
+        }
 
     }
   }
