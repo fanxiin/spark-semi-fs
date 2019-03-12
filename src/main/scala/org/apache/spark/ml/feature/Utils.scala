@@ -35,87 +35,53 @@ object Utils {
     case _ => math.log(x) / math.log(2)
   }
 
-  def estimateMutualInformation(pairs: Array[(Double, Double)], width: Double, numEstimateSteps: Int) = {
+  def estimateJointEntropy(pairs: Array[(Double, Double)], delta: Double, numBins: Int) = {
+//    require((1 / precision % 1) == 0)
     val len = pairs.length
-//    require(len > pointsPerVariable)
-    val halfWidth = width / 2
-    val sortedX = pairs.sortBy(_._1).map(_._1)
-    val step = 1.0 / numEstimateSteps
-    val estimatePoints = 0D until 1D by step
-    val countsX = estimateCounter(sortedX, halfWidth, estimatePoints)
-    val sortedByY = pairs.sortBy(_._2)
-    val countsY = estimateCounter(sortedByY.map(_._2), halfWidth, estimatePoints)
-    val counters = Array.ofDim[Int](estimatePoints.size)
+//    val numBins = (1 / precision).toInt
+    val bins = Array.ofDim[Int](numBins+1)
+    val sortedPairs = pairs.sortBy(_._1)
     var i, j = 0
-    var upper, lower = 0.0
-    val estimateSize = estimatePoints.size
-    val tmp = for ((v, countY) <- estimatePoints.zip(countsY)) yield {
-      upper = v + halfWidth
-      lower = v - halfWidth
-      while (j < len && sortedByY(j)._2 < upper) {
-        val x = sortedByY(j)._1
-        val lowerP = ((x - halfWidth) * numEstimateSteps).asInstanceOf[Int] + 1
-        val upperP = ((x + halfWidth) * numEstimateSteps).asInstanceOf[Int]
-        for (k <- lowerP to upperP if k < estimateSize) counters(k) += 1
+    for (pair <- sortedPairs) yield {
+      val upper = pair._1 + delta
+      val lower = pair._1 - delta
+      while (j < len && sortedPairs(j)._1 < upper){
+        val y = sortedPairs(j)._2
+        val lowerOfBin = {
+          val tmp = ((y - delta) * numBins).toInt + 1
+          if (tmp < 0) 0 else tmp
+        }
+        val upperOfBin = {
+          val tmp = ((y + delta) * numBins).toInt + 1
+          if (tmp < numBins) tmp else numBins
+        }
+        for (k <- lowerOfBin until upperOfBin) bins(k) += 1
         j += 1
       }
-      while (sortedByY(i)._2 < lower) {
-        val x = sortedByY(i)._1
-        val lowerP = ((x - halfWidth) * numEstimateSteps).asInstanceOf[Int] + 1
-        val upperP = ((x + halfWidth) * numEstimateSteps).asInstanceOf[Int]
-        for (k <- lowerP to upperP if k < estimateSize) counters(k) -= 1
+      while (sortedPairs(i)._1 < lower){
+        val y = sortedPairs(i)._2
+        val lowerOfBin =  {
+          val tmp = ((y - delta) * numBins).toInt + 1
+          if (tmp < 0) 0 else tmp
+        }
+        val upperOfBin = {
+          val tmp = ((y + delta) * numBins).toInt + 1
+          if (tmp < numBins) tmp else numBins
+        }
+        for (k <- lowerOfBin until upperOfBin) bins(k) -= 1
         i += 1
       }
-      counters.zip(countsX).map{
-        case (jointCount, countX) =>
-          jointCount.asInstanceOf[Double] / len * log2(jointCount * len / (countX * countY))
-      }.sum
+      val approximateBin = math.round(pair._2 * numBins).toInt
+//      val approximateBin = (pair._2 * numBins).toInt
+      bins(approximateBin)
     }
-    -tmp.sum * step * step / (width * width)
   }
 
-  def estimateEntropy(pairs: Array[Double], width: Double, numEstimateSteps: Int) = {
-    val len = pairs.length
-    //    require(len > pointsPerVariable)
-    val halfWidth = width / 2
-    val sortedX = pairs.sorted
-    val step = 1.0 / numEstimateSteps
-    val estimatePoints = 0D until 1D by step
-    val countsX = estimateCounter(sortedX, halfWidth, estimatePoints)
-    val factor = step / (len * width)
-    countsX.map(c => log2(c * factor)).sum * factor * -1
+  def JointEntropy(paris: Array[(Double, Double)], delta: Double) = {
+    paris.map(p1 => {
+      paris.count(p2 => math.abs(p1._1 - p2._1) < delta && math.abs(p1._2 - p2._2) < delta )
+    })
   }
-
-  /**
-    * Count the number of sample points that locate in the intervals which are centered on estimatePoints.
-    * @param sorted the sample values in ascending order
-    * @param halfWidth width of intervals is 2 * halfWidth
-    * @param estimatePoint points to estimate
-    * @return Array of estimate points counts of each point.
-    */
-  def estimateCounter(sorted: Array[Double], halfWidth: Double, estimatePoint: Seq[Double]): Array[Int]= {
-    val len = sorted.length
-    var counter = 0
-    var i, j = 0
-    var upper, lower = 0.0
-    val counts = for (v <- estimatePoint)
-      yield {
-        upper = v + halfWidth
-        lower = v - halfWidth
-        while (j < len && sorted(j) < upper) {
-          j += 1
-          counter += 1
-        }
-        while (sorted(i) < lower) {
-          i += 1
-          counter -= 1
-        }
-        counter
-      }
-    counts.toArray
-  }
-
-
 
   def main(args: Array[String]): Unit = {
 //    val result3 = countNeighborHood1(a, 0.15)
@@ -132,11 +98,36 @@ object Utils {
 //    println(t4 - t3)
 //    println(result1.sorted.mkString(","))
 //    println(result.sorted.mkString(","))
-    val a = (1.0D to 20.0D by 1.0).toArray.map(x => (x / 20, 0.0))
-    println(a.mkString(", "))
-    val mi = estimateMutualInformation(a,0.12,10)
-    val e1 = estimateEntropy(a.map(_._1),0.12,10)
-    val e2 = estimateEntropy(a.map(_._2),0.12,10)
-    println(mi +"\t" + e1 + "\t" + e2)
+//    val a = (1.0D to 20.0D by 1.0).toArray.map(x => (x / 20, 0.0))
+    val num = 10000
+    val delta = 0.1
+    val a = (1 to num).toArray.map(_ => (util.Random.nextDouble(), util.Random.nextDouble())).sortBy(_._1)
+//    println(a.mkString(", "))
+    val t1 = System.currentTimeMillis()
+    val r1 = JointEntropy(a,delta)
+    val t2 = System.currentTimeMillis()
+    val r2 = estimateJointEntropy(a, delta, 100000)
+    val t3 = System.currentTimeMillis()
+//    println(r1.sorted.mkString(", "))
+//    println(r2.sorted.mkString(", "))
+//    val sr1 = r1.sorted
+//    val sr2 = r2.sorted
+    println(t2-t1)
+    println(t3-t2)
+//    println(r1.mkString(","))
+//    println(r2.mkString(","))
+    val diff = r1.zip(r2).filter(a=>a._1 != a._2)
+    println(diff.mkString(","))
+    println(diff.length)
+    println(diff.count(a=>a._2> a._1))
+    println(diff.count(a=>a._2< a._1))
+//    def locate(x: Double, v:Double, e: Double) ={
+//      if (v < x + e && v > x - e) true
+//      else false
+//    }
+//    val t = a.map(p1 => {
+//      a.count(p2 => locate(p1._2-p2._2, 0.1, 0.00001))
+//    }).count(_ != 0)
+//    println(t)
   }
 }
