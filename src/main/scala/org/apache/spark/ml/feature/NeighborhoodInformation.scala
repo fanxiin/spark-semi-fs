@@ -37,7 +37,7 @@ class NeighborhoodInformation(
 
   val relevance = {
     val numClass = numLabels
-    val delat_ = delta
+    val delta_ = delta
     dataset.map{
       case (col, values) if nominalIndices.value.contains(col) =>
         val labels = bLabels.value
@@ -60,7 +60,7 @@ class NeighborhoodInformation(
         x.flatMap { case (_, v) =>
             val sortedV = v.sorted
             var lower = 0
-            var upper = sortedV.head + delat_
+            var upper = sortedV.head + delta_
             var current = sortedV.head
             var i = 0
             while (sortedV(i) < upper) {
@@ -69,7 +69,7 @@ class NeighborhoodInformation(
             var counter = i
             for (i <- counter until sortedV.size)
               yield {
-                val n_upper = sortedV(i) + delat_
+                val n_upper = sortedV(i) + delta_
               }
             ???
 
