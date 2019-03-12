@@ -1,7 +1,6 @@
 package org.apache.spark.ml.feature
 
 import org.apache.spark.Partitioner
-import org.apache.spark.ml.attribute.{AttributeGroup, NominalAttribute}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.ml.linalg.Vector
@@ -17,7 +16,7 @@ class NeighborhoodInformation(
   )= ???
 }
 
-object NeighborhoodInformation{
+object NeighborhoodInformationHelper{
   type DataFormat = (Int, Array[Double])
   def rotateRDD(data: RDD[LabeledPoint], numPartitions: Int = 0): RDD[DataFormat] = {
     val oldPartitions = data.getNumPartitions
@@ -44,13 +43,17 @@ object NeighborhoodInformation{
     denseData
   }
 
-  def rotateDFasRDD(df: DataFrame): RDD[DataFormat] = {
-    val oldPartitions = df.rdd.getNumPartitions
-    val numElements = df.count
+  /**
+    * Convert DataFrame into a column form RDD[(Int, Array[Double])]. First element of tuple is index of column,
+    * second is value of origin instances in this column.
+    * @param df DataFrame data.
+    * @param numPartitions Number of result's partition.
+    * @return Column RDD
+    */
+  def rotateDFasRDD(df: DataFrame, numPartitions: Int): RDD[(Int, Array[Double])] = {
     val numAttributes = df.first().getAs[Vector](1).size + 1
-    val eqDistributeRDD = df.rdd.zipWithIndex().map(_.swap).partitionBy(new ExactPartition(oldPartitions, numElements))
-    val columnarRDD = eqDistributeRDD.mapPartitionsWithIndex{ case (pIndex, iter) =>
-      val rows = iter.toArray.map(_._2)
+    val columnarRDD = df.rdd.mapPartitionsWithIndex{ case (pIndex, iter) =>
+      val rows = iter.toArray
       val mat = Array.ofDim[Double](numAttributes, rows.length)
       var j = 0
       for (row <- rows) {
@@ -60,13 +63,24 @@ object NeighborhoodInformation{
         mat(dv.size)(j) = label
         j += 1
       }
-      val chunks = for (i <- 0 until numAttributes) yield (i * oldPartitions + pIndex, mat(i))
+      val chunks = for (i <- 0 until numAttributes) yield (ColumnTransferKey(i, pIndex), mat(i)) //不使用三元组节省减小传输时间？
       chunks.toIterator
     }
-    val numChunks = oldPartitions * numAttributes
-    columnarRDD.sortByKey()
-      .partitionBy(new ColumnPartition(numAttributes, numChunks))
+    implicit def orderByColumnTransferKey[A <: ColumnTransferKey] : Ordering[A] =
+      Ordering.by(k => (k.colIndex, k.partIndex))
+    columnarRDD.repartitionAndSortWithinPartitions(new ColumnTransferPartitioner(numPartitions))
+      .mapPartitions(iter =>
+        iter.toArray.groupBy(_._1.colIndex).map(v =>(v._1, v._2.flatMap(_._2))).toIterator)
       .persist(StorageLevel.MEMORY_ONLY)
+  }
+}
+
+case class ColumnTransferKey(colIndex: Int, partIndex: Int)
+
+class ColumnTransferPartitioner(override val numPartitions: Int) extends Partitioner{
+  override def getPartition(key: Any): Int = {
+    val k = key.asInstanceOf[ColumnTransferKey]
+    k.colIndex % numPartitions
   }
 }
 

@@ -22,25 +22,29 @@ class NeighborhoodInformationTest extends FunSuite with BeforeAndAfterAll {
     sc = spark.sparkContext
   }
 
-  test("intgers"){
+  test("rotate test"){
     val df = spark.read.parquet(FILE_PREFIX + "simple-ml-integers")
     val rf = new RFormula()
       .setFormula("int3 ~ int1 + int2 + int1:int2")
       .fit(df)
     val cleanedDf = rf.transform(df).select("label", "features")
     cleanedDf.show()
-    val test = spark.range(1000,1100).toDF().withColumn("x",col("id") + 100)
+    val test = spark.range(0,20,1).toDF().withColumn("x",col("id"))
+      .withColumn("y",col("x")+1)
       .withColumn("l",rand()>0.5)
     test.show()
-    val rf1 = new RFormula().setFormula("l ~ x + id").fit(test)
-    val cleanedTest = rf1.transform(test).select("label", "features").repartition(10)
-    val rot = NeighborhoodInformation.rotateDFasRDD(cleanedTest)
+    val rf1 = new RFormula().setFormula("l ~ x + id + y").fit(test)
+    val cleanedTest = rf1.transform(test).select("label", "features").repartition(4)
+    cleanedTest.show()
+    val rot = NeighborhoodInformationHelper.rotateDFasRDD(cleanedTest,3)
 //    rot.foreach{case (i, array) => println(i+" "+array.mkString("[",",","]"))}
+
     rot.collectPartitions().foreach(a=>{
       a.foreach(pair=>println(pair._1 +"\t"+ pair._2.mkString(",")))
-      println()
+      println("-")
     })
-    rot.mapPartitions()
+    val result = rot.collect.toMap
+    assert(result.getOrElse(0, Array(0)).zip(result.getOrElse(1, Array(1))).forall(v => v._1==v._2))
   }
 
   ignore("test"){
