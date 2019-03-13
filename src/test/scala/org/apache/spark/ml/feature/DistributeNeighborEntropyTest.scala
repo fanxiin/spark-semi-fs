@@ -6,7 +6,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions._
 import org.scalatest.{BeforeAndAfterAll, FunSuite}
 
-class NeighborhoodInformationTest extends FunSuite with BeforeAndAfterAll {
+class DistributeNeighborEntropyTest extends FunSuite with BeforeAndAfterAll {
   var spark: SparkSession = _
   var sc: SparkContext = _
   final val FILE_PREFIX = "src/test/resources/data/"

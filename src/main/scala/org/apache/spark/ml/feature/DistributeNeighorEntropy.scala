@@ -7,27 +7,91 @@ import org.apache.spark.sql.DataFrame
 import org.apache.spark.ml.linalg.Vector
 import org.apache.spark.storage.StorageLevel
 
-class NeighborhoodInformation(
+import scala.collection.mutable.ArrayBuffer
+
+class DistributeNeighborEntropy(
     val delta: Double,
     val dataset: RDD[(Int, Array[Double])],
-    val labels: Array[Byte],
-    val numLabels: Int,
+    val labelIndex: Int,
     val nominalIndices: Set[Int]) {
-  val sc = dataset.context
-  val getRelevance: Array[Double] = {
-    val bLabels = sc.broadcast(labels)
+  private val sc = dataset.context
+  private val attributes = dataset.filter(_._1 != labelIndex)
+  val entropyMap: Map[Int, Double] = entropyArray(dataset).toMap
+  val relevanceMap: Map[Int, Double] = mutualInformation(labelIndex, attributes).toMap
+
+  private def entropyArray(colSet: RDD[(Int, Array[Double])]): Array[(Int, Double)] = {
+    val delta_ = delta
+    val bNominalIndices = sc.broadcast(nominalIndices)
+    val entropyRdd = colSet.map{
+      case (index, values) if bNominalIndices.value.contains(index) =>
+        (index, LocalNeighborEntropy.entropy(values.map(_.toShort)))
+      case (index, values) if ! bNominalIndices.value.contains(index) =>
+        (index, LocalNeighborEntropy.entropy(values, delta_))
+    }
+    val result = entropyRdd.collect()
+    // Broadcast should be removed after it is determined that it is no longer need(include a RDD recovery compute).
+    bNominalIndices.destroy()
+    result
+  }
+
+  /**
+    * Compute joint entropy between col and each column in colSet.
+    * @param col The fixed column
+    * @param colSet Set of column to be compute with.
+    * @return Result of entropy set.
+    */
+  private def jointEntropyArray(
+      col: (Int, Array[Double]),
+      colSet: RDD[(Int, Array[Double])]): Array[(Int, Double)] = {
+    val (indexX, valuesX) = col
     val bNominalIndices = sc.broadcast(nominalIndices)
     val delta_ = delta
-    dataset.map{
-      case (colIndex, col) if bNominalIndices.value.contains(colIndex) =>
-
+    val broadcastList = ArrayBuffer[Broadcast[_]](bNominalIndices)
+    val entropyRdd = if (nominalIndices.contains(indexX)) {
+      val bValuesX = sc.broadcast(valuesX.map(_.toShort))
+      broadcastList += bValuesX
+      colSet.map {
+        case (indexY, valuesY) if bNominalIndices.value.contains(indexY) =>
+          val values = bValuesX.value.zip(valuesY.map(_.toShort))
+          (indexY, LocalNeighborEntropy.jointEntropy(values))
+        case (indexY, valuesY) if ! bNominalIndices.value.contains(indexY) =>
+          val values = bValuesX.value.zip(valuesY)
+          (indexY, LocalNeighborEntropy.jointEntropy(values, delta_))
+      }
+    } else {
+      val bValuesX = sc.broadcast(valuesX)
+      broadcastList += bValuesX
+      colSet.map {
+        case (indexY, valuesY) if bNominalIndices.value.contains(indexY) =>
+          val values = valuesY.map(_.toShort).zip(bValuesX.value)
+          (indexY, LocalNeighborEntropy.jointEntropy(values, delta_))
+        case (indexY, valuesY) if ! bNominalIndices.value.contains(indexY) =>
+          val values = bValuesX.value.zip(valuesY)
+          (indexY, LocalNeighborEntropy.jointEntropy(values, delta_))
+      }
     }
-    ???
+    val result = entropyRdd.collect()
+    broadcastList.foreach(_.destroy())
+    result
   }
+
+
+  def mutualInformation(colIndex: Int, colSet: RDD[(Int, Array[Double])]): Array[(Int, Double)]= {
+    val col = dataset.filter(_._1 == colIndex).first()
+    val jointEntropy = jointEntropyArray(col, colSet)
+    val h_x = entropyMap(colIndex)
+    jointEntropy.map{
+      case (index, h_xy) =>
+        val h_y = entropyMap(index)
+        (index, h_x + h_y - h_xy)
+    }
+  }
+
+  def mutualInformation(colIndex: Int): Array[(Int, Double)]= mutualInformation(colIndex, attributes)
 
 }
 
-object NeighborhoodInformationHelper{
+object NeighborEntropyHelper{
   type DataFormat = (Int, Array[Double])
   def rotateRDD(data: RDD[LabeledPoint], numPartitions: Int = 0): RDD[DataFormat] = {
     val oldPartitions = data.getNumPartitions

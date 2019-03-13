@@ -1,6 +1,6 @@
 package org.apache.spark.ml.feature
 
-object Utils {
+object LocalNeighborEntropy {
 
   /**
     * Fast counting the neighbor counts of elements in values. The ordering of elements not guaranteed.
@@ -8,7 +8,7 @@ object Utils {
     * @param delta  Threshold of neighbor relationship.
     * @return Numbers of elements' neighbor
     */
-  def neighborCounts(values: Array[Double], delta: Double): Array[Int] = {
+  private def neighborCounts(values: Array[Double], delta: Double): Array[Int] = {
     val sortedValues = values.sorted
     val len = sortedValues.length
     var i, j, counter = 0
@@ -37,37 +37,81 @@ object Utils {
     })
   }
 
-  def log2(x: Double): Double = x match {
+  private def log2(x: Double): Double = x match {
     case 0 => 0
     case _ => math.log(x) / math.log(2)
   }
 
   /**
-    * Fast single numerical variable neighbor entropy compute.
+    * Compute single numerical variable neighbor entropy.
     *
     * @param data  1-dimension data.
-    * @param delta The threshold of neighborhood relationshop.
+    * @param delta The threshold of neighborhood relationship.
     * @return neighbor entropy
     */
-  def neighborEntropy(data: Array[Double], delta: Double): Double = {
+  def entropy(data: Array[Double], delta: Double): Double = {
     val len = data.length.toDouble
     val counts = neighborCounts(data, delta)
     counts.map(c => log2(c / len)).sum / len * -1
   }
 
   /**
-    * Estimate the delta-neighbor joint entropy. Use infinite norm as the measure of neighborhood relationship. The
-    * ordering of elements not guaranteed.
+    * Compute single nominal variable (neighbor) entropy.
+    *
+    * @param data  1-dimension discrete data.
+    * @return neighbor entropy
+    */
+  def entropy(data: Array[Short]): Double = {
+    val len = data.length.toDouble
+    val maxX = data.max
+    val table = Array.ofDim[Int](maxX + 1)
+    data.foreach(table(_) += 1)
+    table.map(c => c * log2(c / len)).sum / len * -1
+  }
+
+  /**
+    * Estimate the delta-neighbor joint entropy between two numerical variable. Use infinite norm as the measure of
+    * neighborhood relationship.The ordering of elements not guaranteed.
     *
     * @param data    2-dimension data.
     * @param delta   The threshold of neighborhood relationship.
     * @param numBins Number of bins to estimate the count.
     * @return estimate of neighbor entropy.
     */
-  def estimateNJE(data: Array[(Double, Double)], delta: Double, numBins: Int = 100000): Double = {
+  def jointEntropy(data: Array[(Double, Double)], delta: Double, numBins: Int = 100000): Double = {
     val len = data.length.toDouble
     val counts = estimateNeighborCounts(data, delta, numBins)
     counts.map(c => log2(c / len)).sum / len * -1
+  }
+
+  /**
+    * Compute the delta-neighbor joint entropy between nominal and numerical variable. Use infinite norm as the
+    * measure of neighborhood relationship.The ordering of elements not guaranteed.
+    *
+    * @param data    2-dimension data.
+    * @param delta   The threshold of neighborhood relationship.
+    * @return neighbor entropy.
+    */
+  def jointEntropy(data: Array[(Short, Double)], delta: Double): Double = {
+    val len = data.length.toDouble
+    val groupedData = data.groupBy(_._1).map(_._2.unzip._2)
+    groupedData.flatMap(neighborCounts(_, delta)).map(c => log2( c / len)).sum / len * -1
+  }
+  /**
+    * Compute the (delta-neighbor) joint entropy of two nominal variable.
+    *
+    * @param data    2-dimension data.
+    * @return (neighbor) entropy.
+    */
+  def jointEntropy(data: Array[(Short, Short)]): Double = {
+    val len = data.length.toDouble
+    def max(a: Short, b: Short) = if (a > b) a else b
+    val (maxX, maxY) = data.reduce{
+      case ((max_x, max_y), (x, y)) => (max(max_x,x), max(max_y, y))
+    }
+    val contingency = Array.ofDim[Int](maxX + 1, maxY + 1)
+    for ((x, y) <- data) contingency(x)(y) += 1
+    contingency.flatten.map(c => c * log2(c / len)).sum / len * -1
   }
 
   /**
@@ -79,7 +123,7 @@ object Utils {
     * @param numBins Number of bins to estimate the count.
     * @return Approximate numbers of elements' neighbor.
     */
-  def estimateNeighborCounts(data: Array[(Double, Double)], delta: Double, numBins: Int): Array[Int] = {
+  private def estimateNeighborCounts(data: Array[(Double, Double)], delta: Double, numBins: Int): Array[Int] = {
     //    require((1 / precision % 1) == 0)
     val len = data.length
     val bins = Array.ofDim[Int](numBins + 1)
@@ -142,3 +186,4 @@ object Utils {
     }).sum / len * -1
   }
 }
+
