@@ -1,6 +1,7 @@
 package org.apache.spark.ml.feature
 
 import org.apache.spark.Partitioner
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.ml.linalg.Vector
@@ -8,12 +9,22 @@ import org.apache.spark.storage.StorageLevel
 
 class NeighborhoodInformation(
     val delta: Double,
+    val dataset: RDD[(Int, Array[Double])],
+    val labels: Array[Byte],
+    val numLabels: Int,
     val nominalIndices: Set[Int]) {
-  type DataFormat
+  val sc = dataset.context
+  val getRelevance: Array[Double] = {
+    val bLabels = sc.broadcast(labels)
+    val bNominalIndices = sc.broadcast(nominalIndices)
+    val delta_ = delta
+    dataset.map{
+      case (colIndex, col) if bNominalIndices.value.contains(colIndex) =>
 
-  private def computeContingencyTable(
-      data: RDD[DataFormat]
-  )= ???
+    }
+    ???
+  }
+
 }
 
 object NeighborhoodInformationHelper{

@@ -43,6 +43,7 @@ class NeighborhoodInformationTest extends FunSuite with BeforeAndAfterAll {
       a.foreach(pair=>println(pair._1 +"\t"+ pair._2.mkString(",")))
       println("-")
     })
+    println("0-> " + rot.first())
     val result = rot.collect.toMap
     assert(result.getOrElse(0, Array(0)).zip(result.getOrElse(1, Array(1))).forall(v => v._1==v._2))
   }
