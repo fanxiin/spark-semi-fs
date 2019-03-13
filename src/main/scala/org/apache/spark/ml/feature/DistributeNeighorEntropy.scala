@@ -11,13 +11,10 @@ import scala.collection.mutable.ArrayBuffer
 
 class DistributeNeighborEntropy(
     val delta: Double,
-    val dataset: RDD[(Int, Array[Double])],
-    val labelIndex: Int,
+    dataset: RDD[(Int, Array[Double])],
     val nominalIndices: Set[Int]) {
   private val sc = dataset.context
-  private val attributes = dataset.filter(_._1 != labelIndex)
   val entropyMap: Map[Int, Double] = entropyArray(dataset).toMap
-  val relevanceMap: Map[Int, Double] = mutualInformation(labelIndex, attributes).toMap
 
   private def entropyArray(colSet: RDD[(Int, Array[Double])]): Array[(Int, Double)] = {
     val delta_ = delta
@@ -76,18 +73,15 @@ class DistributeNeighborEntropy(
   }
 
 
-  def mutualInformation(colIndex: Int, colSet: RDD[(Int, Array[Double])]): Array[(Int, Double)]= {
-    val col = dataset.filter(_._1 == colIndex).first()
+  def mutualInformation(col: (Int, Array[Double]), colSet: RDD[(Int, Array[Double])]): Array[(Int, Double)]= {
     val jointEntropy = jointEntropyArray(col, colSet)
-    val h_x = entropyMap(colIndex)
+    val h_x = entropyMap(col._1)
     jointEntropy.map{
       case (index, h_xy) =>
         val h_y = entropyMap(index)
         (index, h_x + h_y - h_xy)
     }
   }
-
-  def mutualInformation(colIndex: Int): Array[(Int, Double)]= mutualInformation(colIndex, attributes)
 
 }
 
