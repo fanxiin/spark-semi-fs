@@ -143,6 +143,7 @@ object NeighborEntropyHelper{
   }
 
   def formatData(data: RDD[(Int, Array[Double])], nominalIndices: Set[Int]): RDD[(Int, Array[Double])] = {
+    // TODO the broadcast in this way may cause some problems.
     val bNominalIndices = data.context.broadcast(nominalIndices)
     data.map {
       case (index, values) if ! bNominalIndices.value.contains(index) =>

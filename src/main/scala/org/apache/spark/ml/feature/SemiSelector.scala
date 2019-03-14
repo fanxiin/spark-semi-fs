@@ -1,6 +1,8 @@
 package org.apache.spark.ml.feature
 
+import org.apache.hadoop.fs.Path
 import org.apache.spark.ml.attribute.{Attribute, AttributeGroup, UnresolvedAttribute}
+import org.apache.spark.ml.feature.SemiSelectorModel.SemiSelectorWriter
 import org.apache.spark.ml.{Estimator, Model}
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.param.shared.{HasFeaturesCol, HasLabelCol, HasOutputCol}
@@ -12,10 +14,10 @@ import org.apache.spark.ml.linalg.{DenseVector, SparseVector, Vector, VectorUDT,
 import org.apache.spark.storage.StorageLevel
 
 private[feature] trait SemiSelectorParams extends Params
-  with HasFeaturesCol with HasOutputCol with HasLabelCol with DefaultParamsWritable{
+  with HasFeaturesCol with HasOutputCol with HasLabelCol with DefaultParamsWritable {
 
   final val numTopFeatures = new IntParam(this, "numTopFeatures",
-  "Number of features that selector will select.",
+    "Number of features that selector will select.",
     ParamValidators.gtEq(1))
   setDefault(numTopFeatures, 20)
 
@@ -23,7 +25,6 @@ private[feature] trait SemiSelectorParams extends Params
     "The threshold of neighborhood relationship.",
     ParamValidators.gt(0)
   )
-
 }
 
 
@@ -49,11 +50,9 @@ class SemiSelector(override val uid: String)
     val attr = attributeGroup.attributes.get
     val numAttributes = attr.length
     val nominalIndices = attr.filter(_.isNominal).map(_.index.get).toSet
-    val data = dataset.select(col($(labelCol)),col($(featuresCol)))
+    val data = dataset.select(col($(labelCol)), col($(featuresCol)))
 
     val rotatedData = NeighborEntropyHelper.rotateDFasRDD(data, 10)
-
-    // TODO numerical column should be locate between 0 and 1
 
     val formattedData = NeighborEntropyHelper.formatData(rotatedData, nominalIndices)
     formattedData.persist(StorageLevel.MEMORY_ONLY)
@@ -66,18 +65,20 @@ class SemiSelector(override val uid: String)
       nominalIndices
     )
     val selected = collection.mutable.Set[Int]()
+
+    // TODO implement a semi-supervised version
     val relevance = neighborEntropy.mutualInformation(classCol, attrCol).toMap
     val accumulateRedundancy = Array.ofDim[Double](numAttributes)
     var currentSelected = relevance.maxBy(_._2)
     selected += currentSelected._1
     while (selected.size < $(numTopFeatures)) {
-      val candidateCol = attrCol.filter(col => ! selected.contains(col._1))
+      val candidateCol = attrCol.filter(col => !selected.contains(col._1))
       val previousCol = attrCol.filter(_._1 == currentSelected._1).first()
       val mis = neighborEntropy.mutualInformation(previousCol, candidateCol)
-      mis.foreach {case (index, mi) => accumulateRedundancy(index) += mi}
+      mis.foreach { case (index, mi) => accumulateRedundancy(index) += mi }
       val selectedCounts = selected.size
-      val measures = mis.map{
-        case(index, _) =>
+      val measures = mis.map {
+        case (index, _) =>
           val sig = relevance(index) - accumulateRedundancy(index) / selectedCounts
           (index, sig)
       }
@@ -97,9 +98,13 @@ class SemiSelector(override val uid: String)
   }
 }
 
-final class SemiSelectorModel private[ml] (
+object SemiSelector extends DefaultParamsReadable[SemiSelector] {
+  override def load(path: String): SemiSelector = super.load(path)
+}
+
+final class SemiSelectorModel private[ml](
     override val uid: String,
-    private val selectedFeatures: Array[Int]) extends Model[SemiSelectorModel] with SemiSelectorParams with MLWritable {
+    val selectedFeatures: Array[Int]) extends Model[SemiSelectorModel] with SemiSelectorParams with MLWritable {
   private val filterIndices = selectedFeatures.sorted
 
   override def copy(extra: ParamMap): SemiSelectorModel = {
@@ -107,14 +112,9 @@ final class SemiSelectorModel private[ml] (
     copyValues(copied, extra).setParent(parent)
   }
 
-  override def write: MLWriter = ???
+  override def write: MLWriter = new SemiSelectorWriter(this)
 
   override def transform(dataset: Dataset[_]): DataFrame = {
-//    val slicer = new VectorSlicer()
-//        .setInputCol($(featuresCol))
-//        .setOutputCol($(outputCol))
-//        .setIndices(filterIndices)
-//    slicer.transform(dataset)
     val transformedSchema = transformSchema(dataset.schema)
     val newField = transformedSchema.last
     val slicer = udf { vec: Vector =>
@@ -134,13 +134,52 @@ final class SemiSelectorModel private[ml] (
 
   def prepOutputField(schema: StructType): StructField = {
     val origAttrGroup = AttributeGroup.fromStructField(schema($(featuresCol)))
-    val selectAttr = if(origAttrGroup.attributes.nonEmpty){
+    // transformSchema method will run two times in a pipeline.
+    // First, PipelineModel has a transformSchema which will invoke each stage's method.
+    // Second, when perform a dataset transform of each stage, transformSchema will perform.
+    val selectAttr = if (origAttrGroup.attributes.nonEmpty) {
+      // For the second invoke, we need schema.
       origAttrGroup.attributes.get.zipWithIndex.filter(a => filterIndices.contains(a._2)).map(_._1)
     } else {
-      Array.fill[Attribute](filterIndices.size)(UnresolvedAttribute)
+      // For the first invoke, we only need know the type of output not the schema.
+      // And because when a transformSchema invoke by the Pipeline's, none of stage really run. There is no way to get
+      // schema.
+      Array.fill[Attribute](filterIndices.length)(UnresolvedAttribute)
     }
-
     val newAttrGroup = new AttributeGroup($(outputCol), selectAttr)
     newAttrGroup.toStructField
   }
+}
+
+object SemiSelectorModel extends MLReadable[SemiSelectorModel] {
+
+  private[SemiSelectorModel] class SemiSelectorWriter(instance: SemiSelectorModel) extends MLWriter {
+
+    private case class Data(selectedFeatures: Seq[Int])
+
+    override protected def saveImpl(path: String): Unit = {
+      DefaultParamsWriter.saveMetadata(instance, path, sc)
+      val data = Data(instance.selectedFeatures.toSeq)
+      val dataPath = new Path(path, "data").toString
+      sparkSession.createDataFrame(Seq(data)).repartition(1).write.parquet(dataPath)
+    }
+  }
+
+  private class SemiSelectorReader extends MLReader[SemiSelectorModel] {
+    private val className = classOf[SemiSelectorModel].getName
+
+    override def load(path: String): SemiSelectorModel = {
+      val metadata = DefaultParamsReader.loadMetadata(path, sc, className)
+      val dataPath = new Path(path, "data").toString
+      val data = sparkSession.read.parquet(dataPath).select("selectedFeatures").head
+      val selectedFeatures = data.getAs[Seq[Int]](0).toArray
+      val model = new SemiSelectorModel(metadata.uid, selectedFeatures)
+      DefaultParamsReader.getAndSetParams(model, metadata)
+      model
+    }
+  }
+
+  override def read: MLReader[SemiSelectorModel] = new SemiSelectorReader
+
+  override def load(path: String): SemiSelectorModel = super.load(path)
 }
