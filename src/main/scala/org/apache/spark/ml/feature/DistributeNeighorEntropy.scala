@@ -142,6 +142,22 @@ object NeighborEntropyHelper{
         iter.toArray.groupBy(_._1.colIndex).map(v =>(v._1, v._2.flatMap(_._2))).toIterator)
       .persist(StorageLevel.MEMORY_ONLY)
   }
+
+  def formatData(data: RDD[(Int, Array[Double])], nominalIndices: Set[Int]): RDD[(Int, Array[Double])] = {
+    val bNominalIndices = data.context.broadcast(nominalIndices)
+    data.map {
+      case (index, values) if ! bNominalIndices.value.contains(index) =>
+        val (max, min) = values.reduce[(Double, Double)]{
+          case (v, that) => (math.max(v._1,that._1), math.min(v._2, that._2))
+        }
+        val originScale = max - min
+        val newValues = values.map(v => (v - min) / originScale + min)
+        (index, newValues)
+      case (index, values) if bNominalIndices.value.contains(index) => (index, values)
+    }
+  }
+
+
 }
 
 case class ColumnTransferKey(colIndex: Int, partIndex: Int)

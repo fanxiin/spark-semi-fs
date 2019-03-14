@@ -51,6 +51,9 @@ class SemiSelector(override val uid: String)
     val data = dataset.select(col($(labelCol)),col($(featuresCol)))
 
     val rotatedData = NeighborEntropyHelper.rotateDFasRDD(data, 10)
+
+    // TODO numerical column should be locate between 0 and 1
+
     val attrCol = rotatedData.filter(_._1 != numAttributes)
     val classCol = rotatedData.filter(_._1 == numAttributes).first
     val neighborEntropy = new DistributeNeighborEntropy(

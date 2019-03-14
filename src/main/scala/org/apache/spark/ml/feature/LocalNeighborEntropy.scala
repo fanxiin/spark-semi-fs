@@ -115,8 +115,8 @@ object LocalNeighborEntropy {
   }
 
   /**
-    * Estimate the delta-neighbor counts of pairs. Use infinite norm as the measure of neighborhood relationship. The
-    * ordering of elements not guaranteed.
+    * Estimate the delta-neighbor counts of pairs. Values of column must between 0 and 1! Use infinite norm as the
+    * measure of neighborhood relationship. The ordering of elements not guaranteed.
     *
     * @param data    2-dimension data.
     * @param delta   The threshold of neighborhood relationship.
