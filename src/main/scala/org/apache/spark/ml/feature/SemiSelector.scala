@@ -4,9 +4,9 @@ import org.apache.spark.ml.attribute.AttributeGroup
 import org.apache.spark.ml.{Estimator, Model}
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.param.shared.{HasFeaturesCol, HasLabelCol, HasOutputCol}
-import org.apache.spark.ml.util.{DefaultParamsWritable, MLWritable, MLWriter, SchemaUtils}
+import org.apache.spark.ml.util._
 import org.apache.spark.sql.{DataFrame, Dataset}
-import org.apache.spark.sql.types.{DoubleType, StructType}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.functions._
 import org.apache.spark.ml.linalg.VectorUDT
 
@@ -28,12 +28,26 @@ private[feature] trait SemiSelectorParams extends Params
 
 class SemiSelector(override val uid: String)
   extends Estimator[SemiSelectorModel] with SemiSelectorParams {
+
+  def this() = this(Identifiable.randomUID("semiSelector"))
+
+  def setNumTopFeatures(value: Int): this.type = set(numTopFeatures, value)
+
+  def setDelta(value: Double): this.type = set(delta, value)
+
+  def setLabelCol(value: String): this.type = set(labelCol, value)
+
+  def setFeaturesCol(value: String): this.type = set(featuresCol, value)
+
+  def setOutputCol(value: String): this.type = set(outputCol, value)
+
   override def fit(dataset: Dataset[_]): SemiSelectorModel = {
     transformSchema(dataset.schema)
+    // if success, numAttributes well be None while attributes will contain info.
     val attributeGroup = AttributeGroup.fromStructField(dataset.schema($(featuresCol)))
-    val numAttributes = attributeGroup.numAttributes.get
-    val attr = attributeGroup.attributes.get.zipWithIndex
-    val nominalIndices = attr.filter(_._1.isNominal).map(_._2).toSet
+    val attr = attributeGroup.attributes.get
+    val numAttributes = attr.length
+    val nominalIndices = attr.filter(_.isNominal).map(_.index.get).toSet
     val data = dataset.select(col($(labelCol)),col($(featuresCol)))
 
     val rotatedData = NeighborEntropyHelper.rotateDFasRDD(data, 10)
@@ -46,7 +60,7 @@ class SemiSelector(override val uid: String)
     )
     val selected = collection.mutable.Set[Int]()
     val relevance = neighborEntropy.mutualInformation(classCol, attrCol).toMap
-    val accumulateRedundancy = (0 until numAttributes).map((_, 0.0)).toMap
+    val accumulateRedundancy = Array.ofDim[Double](numAttributes)
     var currentSelected = relevance.maxBy(_._2)
     selected += currentSelected._1
     while (selected.size < $(numTopFeatures)) {
@@ -71,7 +85,7 @@ class SemiSelector(override val uid: String)
 
   override def transformSchema(schema: StructType): StructType = {
     SchemaUtils.checkColumnType(schema, $(featuresCol), new VectorUDT)
-    SchemaUtils.checkColumnType(schema, $(labelCol), new DoubleType)
+    SchemaUtils.checkNumericType(schema, $(labelCol))
     SchemaUtils.appendColumn(schema, $(outputCol), new VectorUDT)
   }
 }

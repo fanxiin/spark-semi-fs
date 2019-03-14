@@ -106,8 +106,8 @@ object LocalNeighborEntropy {
   def jointEntropy(data: Array[(Short, Short)]): Double = {
     val len = data.length.toDouble
     def max(a: Short, b: Short) = if (a > b) a else b
-    val (maxX, maxY) = data.reduce{
-      case ((max_x, max_y), (x, y)) => (max(max_x,x), max(max_y, y))
+    val (maxX, maxY) = data.reduce[(Short,Short)]{
+      case (v, that) => (max(v._1, that._1), max(v._2, that._2))
     }
     val contingency = Array.ofDim[Int](maxX + 1, maxY + 1)
     for ((x, y) <- data) contingency(x)(y) += 1
