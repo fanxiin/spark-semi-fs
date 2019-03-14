@@ -1,14 +1,15 @@
 package org.apache.spark.ml.feature
 
-import org.apache.spark.ml.attribute.AttributeGroup
+import org.apache.spark.ml.attribute.{Attribute, AttributeGroup, UnresolvedAttribute}
 import org.apache.spark.ml.{Estimator, Model}
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.param.shared.{HasFeaturesCol, HasLabelCol, HasOutputCol}
 import org.apache.spark.ml.util._
 import org.apache.spark.sql.{DataFrame, Dataset}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.functions._
-import org.apache.spark.ml.linalg.VectorUDT
+import org.apache.spark.ml.linalg.{DenseVector, SparseVector, Vector, VectorUDT, Vectors}
+import org.apache.spark.storage.StorageLevel
 
 private[feature] trait SemiSelectorParams extends Params
   with HasFeaturesCol with HasOutputCol with HasLabelCol with DefaultParamsWritable{
@@ -54,11 +55,14 @@ class SemiSelector(override val uid: String)
 
     // TODO numerical column should be locate between 0 and 1
 
-    val attrCol = rotatedData.filter(_._1 != numAttributes)
-    val classCol = rotatedData.filter(_._1 == numAttributes).first
+    val formattedData = NeighborEntropyHelper.formatData(rotatedData, nominalIndices)
+    formattedData.persist(StorageLevel.MEMORY_ONLY)
+
+    val attrCol = formattedData.filter(_._1 != numAttributes)
+    val classCol = formattedData.filter(_._1 == numAttributes).first
     val neighborEntropy = new DistributeNeighborEntropy(
       $(delta),
-      rotatedData,
+      formattedData,
       nominalIndices
     )
     val selected = collection.mutable.Set[Int]()
@@ -106,12 +110,37 @@ final class SemiSelectorModel private[ml] (
   override def write: MLWriter = ???
 
   override def transform(dataset: Dataset[_]): DataFrame = {
-    val slicer = new VectorSlicer()
-        .setInputCol($(featuresCol))
-        .setOutputCol($(outputCol))
-        .setIndices(filterIndices)
-    slicer.transform(dataset)
+//    val slicer = new VectorSlicer()
+//        .setInputCol($(featuresCol))
+//        .setOutputCol($(outputCol))
+//        .setIndices(filterIndices)
+//    slicer.transform(dataset)
+    val transformedSchema = transformSchema(dataset.schema)
+    val newField = transformedSchema.last
+    val slicer = udf { vec: Vector =>
+      vec match {
+        case features: DenseVector => Vectors.dense(filterIndices.map(features(_)))
+        case features: SparseVector => features.slice(filterIndices)
+      }
+    }
+    dataset.withColumn($(outputCol), slicer(col($(featuresCol))), newField.metadata)
   }
 
-  override def transformSchema(schema: StructType): StructType = ???
+  override def transformSchema(schema: StructType): StructType = {
+    SchemaUtils.checkColumnType(schema, $(featuresCol), new VectorUDT)
+    val newField = prepOutputField(schema)
+    StructType(schema :+ newField)
+  }
+
+  def prepOutputField(schema: StructType): StructField = {
+    val origAttrGroup = AttributeGroup.fromStructField(schema($(featuresCol)))
+    val selectAttr = if(origAttrGroup.attributes.nonEmpty){
+      origAttrGroup.attributes.get.zipWithIndex.filter(a => filterIndices.contains(a._2)).map(_._1)
+    } else {
+      Array.fill[Attribute](filterIndices.size)(UnresolvedAttribute)
+    }
+
+    val newAttrGroup = new AttributeGroup($(outputCol), selectAttr)
+    newAttrGroup.toStructField
+  }
 }
