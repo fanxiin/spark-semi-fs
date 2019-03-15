@@ -122,6 +122,7 @@ object NeighborEntropyHelper{
     val numAttributes = df.first().getAs[Vector](1).size + 1
     val columnarRDD = df.rdd.mapPartitionsWithIndex{ case (pIndex, iter) =>
       val rows = iter.toArray
+      println("pId: "+ pIndex +" --------------->" + numAttributes + " * " + rows.length)
       val mat = Array.ofDim[Double](numAttributes, rows.length)
       var j = 0
       for (row <- rows) {

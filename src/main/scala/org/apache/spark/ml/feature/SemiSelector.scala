@@ -1,13 +1,13 @@
 package org.apache.spark.ml.feature
 
 import org.apache.hadoop.fs.Path
-import org.apache.spark.ml.attribute.{Attribute, AttributeGroup, UnresolvedAttribute}
+import org.apache.spark.ml.attribute.{Attribute, AttributeGroup, NumericAttribute, UnresolvedAttribute}
 import org.apache.spark.ml.feature.SemiSelectorModel.SemiSelectorWriter
 import org.apache.spark.ml.{Estimator, Model}
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.param.shared.{HasFeaturesCol, HasLabelCol, HasOutputCol}
 import org.apache.spark.ml.util._
-import org.apache.spark.sql.{DataFrame, Dataset}
+import org.apache.spark.sql.{DataFrame, Dataset, Row}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.functions._
 import org.apache.spark.ml.linalg.{DenseVector, SparseVector, Vector, VectorUDT, Vectors}
@@ -49,14 +49,24 @@ class SemiSelector(override val uid: String)
     transformSchema(dataset.schema)
     // if success, numAttributes well be None while attributes will contain info.
     val attributeGroup = AttributeGroup.fromStructField(dataset.schema($(featuresCol)))
-    val attr = attributeGroup.attributes.get
-    val numAttributes = attr.length
-    val nominalIndices = attr.filter(_.isNominal).map(_.index.get).toSet
+    // TODO dataset may have no metadae
+
     // TODO get missing value info
     val label = Attribute.fromStructField(dataset.schema($(labelCol)))
     // transform origin data into dataset can be handle by DistributeNeighborEntropy.
     val data = dataset.select(col($(labelCol)), col($(featuresCol)))
-    val rotatedData = NeighborEntropyHelper.rotateDFasRDD(data, 10)
+
+    val attr = if (attributeGroup.attributes.nonEmpty) {
+      attributeGroup.attributes.get
+    } else {
+      val numAttr = data.first.getAs[Vector](1).size
+      Array.fill[Attribute](numAttr)(NumericAttribute.defaultAttr)
+    }
+
+    val numAttributes = attr.length
+    val nominalIndices = attr.filter(_.isNominal).map(_.index.get).toSet
+
+    val rotatedData = NeighborEntropyHelper.rotateDFasRDD(data, 200)
     val bcNominalIndices = data.sparkSession.sparkContext.broadcast(nominalIndices)
     val formattedData = NeighborEntropyHelper.formatData(rotatedData, bcNominalIndices)
     formattedData.persist(StorageLevel.MEMORY_ONLY)
@@ -151,7 +161,7 @@ final class SemiSelectorModel private[ml](
       // For the first invoke, we only need know the type of output not the schema.
       // And because when a transformSchema invoke by the Pipeline's, none of stage really run. There is no way to get
       // schema.
-      Array.fill[Attribute](filterIndices.length)(UnresolvedAttribute)
+      Array.fill[Attribute](filterIndices.length)(NumericAttribute.defaultAttr)
     }
     val newAttrGroup = new AttributeGroup($(outputCol), selectAttr)
     newAttrGroup.toStructField

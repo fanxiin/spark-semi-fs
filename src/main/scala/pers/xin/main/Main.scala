@@ -4,53 +4,27 @@ import org.apache.spark.ml.Pipeline
 import org.apache.spark.ml.feature.{SemiSelector, StringIndexer, VectorAssembler}
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
-import org.apache.spark.storage.StorageLevel
 
 object Main {
-  final val FILE_PREFIX = "src/test/resources/data/"
-  final val CLEAN_SUFFIX = "_CLEAN"
-  final val MISSING = "__MISSING__"
+
   def main(args: Array[String]): Unit = {
     val spark = SparkSession.builder()
-      .master("local[4]")
       .appName("feature selection")
       .getOrCreate()
-    val df = spark.read.format("csv")
-      .option("header", true)
+    val df = spark.read.format("libsvm")
       .option("inferSchema", true)
-      .load(FILE_PREFIX + "test_colon_s3.csv")
-    val cleanedDf = cleanLabel(df,df.columns.head).persist(StorageLevel.MEMORY_ONLY)
+      .load(args(0))
 
-    val cols = cleanedDf.columns
-    val labelCol: String = cols.head
-    val attrIndices: Array[String] = cols.drop(1)
+    val repartDF = df.repartition(2000).persist()
 
-    val stringIndexer = new StringIndexer()
-      .setInputCol(labelCol)
-      .setOutputCol("label")
+    val model = new SemiSelector()
+      .setDelta(args(1).toDouble)
+      .setNumTopFeatures(args(2).toInt)
+      .setOutputCol("selected").fit(df)
 
-    val vectorAssembler = new VectorAssembler()
-      .setInputCols(attrIndices)
-      .setOutputCol("features")
-
-    val selector = new SemiSelector()
-      .setDelta(0.15)
-      .setNumTopFeatures(20)
-      .setFeaturesCol("features")
-      .setLabelCol("label")
-
-    val pipeline = new Pipeline()
-      .setStages(Array(stringIndexer, vectorAssembler, selector))
-
-    val model = pipeline.fit(cleanedDf)
-
-    val result = model.transform(cleanedDf)
+    val result = model.transform(df)
 
     result.show()
-    val x = result.first()
   }
 
-  def cleanLabel(df: DataFrame, labelColumn: String): DataFrame = {
-    df.withColumn(labelColumn, when(col(labelColumn).isNull, lit(MISSING)).otherwise(col(labelColumn)))
-  }
 }
