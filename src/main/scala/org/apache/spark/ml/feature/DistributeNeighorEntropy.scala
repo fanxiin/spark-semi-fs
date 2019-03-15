@@ -12,22 +12,21 @@ import scala.collection.mutable.ArrayBuffer
 class DistributeNeighborEntropy(
     val delta: Double,
     dataset: RDD[(Int, Array[Double])],
-    val nominalIndices: Set[Int]) {
+    val bcNominalIndices: Broadcast[Set[Int]]) {
   private val sc = dataset.context
+  val nominalIndices = bcNominalIndices.value
   val entropyMap: Map[Int, Double] = entropyArray(dataset).toMap
 
   private def entropyArray(colSet: RDD[(Int, Array[Double])]): Array[(Int, Double)] = {
     val delta_ = delta
-    val bNominalIndices = sc.broadcast(nominalIndices)
+    val bcNominalIndices_ = bcNominalIndices
     val entropyRdd = colSet.map{
-      case (index, values) if bNominalIndices.value.contains(index) =>
+      case (index, values) if bcNominalIndices_.value.contains(index) =>
         (index, LocalNeighborEntropy.entropy(values.map(_.toShort)))
-      case (index, values) if ! bNominalIndices.value.contains(index) =>
+      case (index, values) if ! bcNominalIndices_.value.contains(index) =>
         (index, LocalNeighborEntropy.entropy(values, delta_))
     }
     val result = entropyRdd.collect()
-    // Broadcast should be removed after it is determined that it is no longer need(include a RDD recovery compute).
-    bNominalIndices.destroy()
     result
   }
 
@@ -41,17 +40,17 @@ class DistributeNeighborEntropy(
       col: (Int, Array[Double]),
       colSet: RDD[(Int, Array[Double])]): Array[(Int, Double)] = {
     val (indexX, valuesX) = col
-    val bNominalIndices = sc.broadcast(nominalIndices)
     val delta_ = delta
-    val broadcastList = ArrayBuffer[Broadcast[_]](bNominalIndices)
+    val broadcastList = ArrayBuffer[Broadcast[_]]()
+    val bcNominalIndices_ = bcNominalIndices
     val entropyRdd = if (nominalIndices.contains(indexX)) {
       val bValuesX = sc.broadcast(valuesX.map(_.toShort))
       broadcastList += bValuesX
       colSet.map {
-        case (indexY, valuesY) if bNominalIndices.value.contains(indexY) =>
+        case (indexY, valuesY) if bcNominalIndices_.value.contains(indexY) =>
           val values = bValuesX.value.zip(valuesY.map(_.toShort))
           (indexY, LocalNeighborEntropy.jointEntropy(values))
-        case (indexY, valuesY) if ! bNominalIndices.value.contains(indexY) =>
+        case (indexY, valuesY) if ! bcNominalIndices_.value.contains(indexY) =>
           val values = bValuesX.value.zip(valuesY)
           (indexY, LocalNeighborEntropy.jointEntropy(values, delta_))
       }
@@ -59,10 +58,10 @@ class DistributeNeighborEntropy(
       val bValuesX = sc.broadcast(valuesX)
       broadcastList += bValuesX
       colSet.map {
-        case (indexY, valuesY) if bNominalIndices.value.contains(indexY) =>
+        case (indexY, valuesY) if bcNominalIndices_.value.contains(indexY) =>
           val values = valuesY.map(_.toShort).zip(bValuesX.value)
           (indexY, LocalNeighborEntropy.jointEntropy(values, delta_))
-        case (indexY, valuesY) if ! bNominalIndices.value.contains(indexY) =>
+        case (indexY, valuesY) if ! bcNominalIndices_.value.contains(indexY) =>
           val values = bValuesX.value.zip(valuesY)
           (indexY, LocalNeighborEntropy.jointEntropy(values, delta_))
       }
@@ -142,17 +141,15 @@ object NeighborEntropyHelper{
         iter.toArray.groupBy(_._1.colIndex).map(v =>(v._1, v._2.flatMap(_._2))).toIterator)
   }
 
-  def formatData(data: RDD[(Int, Array[Double])], nominalIndices: Set[Int]): RDD[(Int, Array[Double])] = {
-    // TODO the broadcast in this way may cause some problems.
-    val bNominalIndices = data.context.broadcast(nominalIndices)
+  def formatData(data: RDD[(Int, Array[Double])], bcNominalIndices: Broadcast[Set[Int]]): RDD[(Int, Array[Double])] = {
     data.map {
-      case (index, values) if ! bNominalIndices.value.contains(index) =>
+      case (index, values) if ! bcNominalIndices.value.contains(index) =>
         val max = values.max
         val min = values.min
         val originScale = max - min
         val newValues = values.map(v => (v - min) / originScale)
         (index, newValues)
-      case (index, values) if bNominalIndices.value.contains(index) => (index, values)
+      case (index, values) if bcNominalIndices.value.contains(index) => (index, values)
     }
   }
 

@@ -25,6 +25,8 @@ private[feature] trait SemiSelectorParams extends Params
     "The threshold of neighborhood relationship.",
     ParamValidators.gt(0)
   )
+
+  // TODO param of label missing value name
 }
 
 
@@ -50,23 +52,26 @@ class SemiSelector(override val uid: String)
     val attr = attributeGroup.attributes.get
     val numAttributes = attr.length
     val nominalIndices = attr.filter(_.isNominal).map(_.index.get).toSet
+    // TODO get missing value info
+    val label = Attribute.fromStructField(dataset.schema($(labelCol)))
+    // transform origin data into dataset can be handle by DistributeNeighborEntropy.
     val data = dataset.select(col($(labelCol)), col($(featuresCol)))
-
     val rotatedData = NeighborEntropyHelper.rotateDFasRDD(data, 10)
-
-    val formattedData = NeighborEntropyHelper.formatData(rotatedData, nominalIndices)
+    val bcNominalIndices = data.sparkSession.sparkContext.broadcast(nominalIndices)
+    val formattedData = NeighborEntropyHelper.formatData(rotatedData, bcNominalIndices)
     formattedData.persist(StorageLevel.MEMORY_ONLY)
 
     val attrCol = formattedData.filter(_._1 != numAttributes)
     val classCol = formattedData.filter(_._1 == numAttributes).first
+
     val neighborEntropy = new DistributeNeighborEntropy(
       $(delta),
       formattedData,
-      nominalIndices
+      bcNominalIndices
     )
     val selected = collection.mutable.Set[Int]()
-
     // TODO implement a semi-supervised version
+    // 这里可以创建一个Rdd过滤掉无类标数据
     val relevance = neighborEntropy.mutualInformation(classCol, attrCol).toMap
     val accumulateRedundancy = Array.ofDim[Double](numAttributes)
     var currentSelected = relevance.maxBy(_._2)
@@ -85,6 +90,8 @@ class SemiSelector(override val uid: String)
       currentSelected = measures.maxBy(_._2)
       selected += currentSelected._1
     }
+    // Broadcast should be removed after it is determined that it is no longer need(include a RDD recovery compute).
+    bcNominalIndices.destroy()
     new SemiSelectorModel(uid, selected.toArray)
   }
 
