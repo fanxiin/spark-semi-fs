@@ -50,7 +50,7 @@ class SemiSelector(override val uid: String)
     // if success, numAttributes well be None while attributes will contain info.
     val attributeGroup = AttributeGroup.fromStructField(dataset.schema($(featuresCol)))
     // TODO dataset may have no metadae
-
+    // TODO sparse data make column transform slower!
     // TODO get missing value info
     val label = Attribute.fromStructField(dataset.schema($(labelCol)))
     // transform origin data into dataset can be handle by DistributeNeighborEntropy.
@@ -66,10 +66,10 @@ class SemiSelector(override val uid: String)
     val numAttributes = attr.length
     val nominalIndices = attr.filter(_.isNominal).map(_.index.get).toSet
 
-    val rotatedData = NeighborEntropyHelper.rotateDFasRDD(data, 200)
+    val rotatedData = NeighborEntropyHelper.rotateDFasRDD(data, 500000)
     val bcNominalIndices = data.sparkSession.sparkContext.broadcast(nominalIndices)
     val formattedData = NeighborEntropyHelper.formatData(rotatedData, bcNominalIndices)
-    formattedData.persist(StorageLevel.MEMORY_ONLY)
+    formattedData.persist(StorageLevel.MEMORY_AND_DISK)
 
     val attrCol = formattedData.filter(_._1 != numAttributes)
     val classCol = formattedData.filter(_._1 == numAttributes).first

@@ -11,18 +11,18 @@ object Main {
     val spark = SparkSession.builder()
       .appName("feature selection")
       .getOrCreate()
-    val df = spark.read.format("libsvm")
+    val df = spark.read.format("csv")
       .option("inferSchema", true)
       .load(args(0))
 
-    val repartDF = df.repartition(2000).persist()
+    val repartDF = df.repartition(500000).persist()
 
     val model = new SemiSelector()
       .setDelta(args(1).toDouble)
       .setNumTopFeatures(args(2).toInt)
-      .setOutputCol("selected").fit(df)
+      .setOutputCol("selected").fit(repartDF)
 
-    val result = model.transform(df)
+    val result = model.transform(repartDF)
 
     result.show()
   }
