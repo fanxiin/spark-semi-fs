@@ -1,9 +1,7 @@
 package pers.xin.main
 
-import org.apache.spark.ml.Pipeline
 import org.apache.spark.ml.feature.{SemiSelector, StringIndexer, VectorAssembler}
 import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.sql.functions._
 
 object Main {
 
@@ -11,20 +9,25 @@ object Main {
     val spark = SparkSession.builder()
       .appName("feature selection")
       .getOrCreate()
-    val df = spark.read.format("csv")
-      .option("inferSchema", true)
-      .load(args(0))
 
-    val repartDF = df.repartition(500000).persist()
+    val df = args(1) match {
+      case "libsvm" => spark.read.format("libsvm").load(args(0))
+      case "parquet" => spark.read.parquet(args(0))
+      case _ => throw new IllegalArgumentException(s"bat format ${args(1)}")
+    }
 
-    val model = new SemiSelector()
-      .setDelta(args(1).toDouble)
-      .setNumTopFeatures(args(2).toInt)
-      .setOutputCol("selected").fit(repartDF)
+    val selector = new SemiSelector()
+      .setDelta(args(2).toDouble)
+      .setNumTopFeatures(args(3).toInt)
+      .setOutputCol("selected")
 
-    val result = model.transform(repartDF)
+    val model = if (args.length == 4) selector.setNumPartitions(args(4).toInt).fit(df)
+      else selector.fit(df)
+
+    val result = model.transform(df)
 
     result.show()
+    println("---" + result.first())
   }
 
 }

@@ -5,7 +5,7 @@ import org.scalatest.{BeforeAndAfterAll, FunSuite}
 import util.Random._
 
 class LocalNeighborEntropyTest extends FunSuite with BeforeAndAfterAll{
-
+  final val FILE_PREFIX = "src/test/resources/data/"
   val num = 10000
 
   test("test the precision of estimate mutual information should small enough")
@@ -48,5 +48,23 @@ class LocalNeighborEntropyTest extends FunSuite with BeforeAndAfterAll{
     assert(ex == -2 * 1.0/2 * log2(1.0/2))
     val mi1 = 0
     assert(mi == mi1)
+  }
+
+  test("ionosphere") {
+    val dataLine = scala.io.Source.fromFile(FILE_PREFIX + "ionosphere.csv").getLines()
+    val dataArray = dataLine.map(_.split(",")).toArray.tail
+    val labelString = dataArray.map(_.last)
+    val labelValue = Set(labelString: _*).zipWithIndex.toMap
+    val label = labelString.map(labelValue(_))
+    val first = dataArray.map(d=>d(1).toInt)
+    val pairs = first.map(_.toDouble).zip(label.map(_.toDouble))
+//    pairs.foreach(println)
+    val mi = exactNMI(first.map(_.toDouble).zip(label.map(_.toDouble)), 0.1)
+    println(mi)
+
+    val ex = entropy(first.map(_.toDouble), 0.1)
+    val ey = entropy(label.map(_.toDouble), 0.1)
+    val exy = jointEntropy(first.map(_.toDouble).zip(label.map(_.toDouble)), 0.1)
+    println(ex+ey-exy)
   }
 }

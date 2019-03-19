@@ -148,7 +148,11 @@ object NeighborEntropyHelper{
         val max = values.max
         val min = values.min
         val originScale = max - min
-        val newValues = values.map(v => (v - min) / originScale)
+        val newValues =
+          if (max > min)
+            values.map(v => (v - min) / originScale)
+          else
+            values
         (index, newValues)
       case (index, values) if bcNominalIndices.value.contains(index) => (index, values)
     }

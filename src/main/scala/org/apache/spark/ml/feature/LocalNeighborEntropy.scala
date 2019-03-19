@@ -142,7 +142,8 @@ object LocalNeighborEntropy {
           val tmp = ((y + delta) * numBins).toInt + 1
           if (tmp < numBins) tmp else numBins
         }
-        for (k <- lowerOfBin until upperOfBin) bins(k) += 1
+        // Because the last index of bin is numBins(length of bins is numBins+1).
+        for (k <- lowerOfBin to upperOfBin) bins(k) += 1
         j += 1
       }
       while (sortedPairs(i)._1 < lower) {
@@ -155,7 +156,7 @@ object LocalNeighborEntropy {
           val tmp = ((y + delta) * numBins).toInt + 1
           if (tmp < numBins) tmp else numBins
         }
-        for (k <- lowerOfBin until upperOfBin) bins(k) -= 1
+        for (k <- lowerOfBin to upperOfBin) bins(k) -= 1
         i += 1
       }
       val approximateBin = math.round(pair._2 * numBins).toInt

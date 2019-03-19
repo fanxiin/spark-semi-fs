@@ -13,6 +13,8 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.ml.linalg.{DenseVector, SparseVector, Vector, VectorUDT, Vectors}
 import org.apache.spark.storage.StorageLevel
 
+import scala.collection.mutable.ArrayBuffer
+
 private[feature] trait SemiSelectorParams extends Params
   with HasFeaturesCol with HasOutputCol with HasLabelCol with DefaultParamsWritable {
 
@@ -25,6 +27,13 @@ private[feature] trait SemiSelectorParams extends Params
     "The threshold of neighborhood relationship.",
     ParamValidators.gt(0)
   )
+
+  /** Default value is the number of attributes.
+    *
+    */
+  final val numPartitions = new IntParam(this, "numPartitions",
+    "Number of partitions of algorithm.",
+    ParamValidators.gtEq(1))
 
   // TODO param of label missing value name
 }
@@ -45,6 +54,8 @@ class SemiSelector(override val uid: String)
 
   def setOutputCol(value: String): this.type = set(outputCol, value)
 
+  def setNumPartitions(value: Int): this.type = set(numPartitions, value)
+
   override def fit(dataset: Dataset[_]): SemiSelectorModel = {
     transformSchema(dataset.schema)
     // if success, numAttributes well be None while attributes will contain info.
@@ -64,9 +75,9 @@ class SemiSelector(override val uid: String)
     }
 
     val numAttributes = attr.length
+    setDefault(numPartitions, numAttributes)
     val nominalIndices = attr.filter(_.isNominal).map(_.index.get).toSet
-
-    val rotatedData = NeighborEntropyHelper.rotateDFasRDD(data, 500000)
+    val rotatedData = NeighborEntropyHelper.rotateDFasRDD(data, $(numPartitions))
     val bcNominalIndices = data.sparkSession.sparkContext.broadcast(nominalIndices)
     val formattedData = NeighborEntropyHelper.formatData(rotatedData, bcNominalIndices)
     formattedData.persist(StorageLevel.MEMORY_AND_DISK)
@@ -79,7 +90,7 @@ class SemiSelector(override val uid: String)
       formattedData,
       bcNominalIndices
     )
-    val selected = collection.mutable.Set[Int]()
+    val selected = new ArrayBuffer[Int]()
     // TODO implement a semi-supervised version
     // 这里可以创建一个Rdd过滤掉无类标数据
     val relevance = neighborEntropy.mutualInformation(classCol, attrCol).toMap
@@ -102,6 +113,7 @@ class SemiSelector(override val uid: String)
     }
     // Broadcast should be removed after it is determined that it is no longer need(include a RDD recovery compute).
     bcNominalIndices.destroy()
+    println("---------->" + selected.mkString(","))
     new SemiSelectorModel(uid, selected.toArray)
   }
 
