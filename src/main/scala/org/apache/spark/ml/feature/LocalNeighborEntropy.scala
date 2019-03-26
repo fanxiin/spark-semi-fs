@@ -1,5 +1,7 @@
 package org.apache.spark.ml.feature
 
+import org.apache.spark.ml.linalg.{DenseVector, SparseVector}
+
 object LocalNeighborEntropy {
 
   /**
@@ -61,12 +63,21 @@ object LocalNeighborEntropy {
     * @param data  1-dimension discrete data.
     * @return neighbor entropy
     */
-  def entropy(data: Array[Short]): Double = {
+  def entropy(data: Array[Double]): Double = {
     val len = data.length.toDouble
-    val maxX = data.max
+    val maxX = data.max.toInt
     val table = Array.ofDim[Int](maxX + 1)
-    data.foreach(table(_) += 1)
+    data.foreach(v=> table(v.toInt) += 1)
     table.map(c => c * log2(c / len)).sum / len * -1
+  }
+
+  def entropy(colData: ColData, delta: Double): Double ={
+    case NumericalColData(_, v: DenseVector) => entropy(v.values, delta)
+    case NumericalColData(_, v: SparseVector) =>
+      entropy(v.values, delta)
+    case NominalColData(_, v: DenseVector) => entropy(v.values)
+    case NominalColData(_, v: SparseVector) =>
+      entropy(v.values)
   }
 
   /**
@@ -92,26 +103,33 @@ object LocalNeighborEntropy {
     * @param delta   The threshold of neighborhood relationship.
     * @return neighbor entropy.
     */
-  def jointEntropy(data: Array[(Short, Double)], delta: Double): Double = {
+  def mixJointEntropy(data: Array[(Double, Double)], delta: Double): Double = {
     val len = data.length.toDouble
     val groupedData = data.groupBy(_._1).map(_._2.unzip._2)
     groupedData.flatMap(neighborCounts(_, delta)).map(c => log2( c / len)).sum / len * -1
   }
+
   /**
     * Compute the (delta-neighbor) joint entropy of two nominal variable.
     *
     * @param data    2-dimension data.
     * @return (neighbor) entropy.
     */
-  def jointEntropy(data: Array[(Short, Short)]): Double = {
+  def jointEntropy(data: Array[(Double, Double)]): Double = {
     val len = data.length.toDouble
-    def max(a: Short, b: Short) = if (a > b) a else b
-    val (maxX, maxY) = data.reduce[(Short,Short)]{
+    def max(a: Double, b: Double) = if (a > b) a else b
+    val (maxX, maxY) = data.reduce[(Double,Double)]{
       case (v, that) => (max(v._1, that._1), max(v._2, that._2))
     }
-    val contingency = Array.ofDim[Int](maxX + 1, maxY + 1)
-    for ((x, y) <- data) contingency(x)(y) += 1
+    val contingency = Array.ofDim[Int](maxX.toInt + 1, maxY.toInt + 1)
+    for ((x, y) <- data) contingency(x.toInt)(y.toInt) += 1
     contingency.flatten.map(c => c * log2(c / len)).sum / len * -1
+  }
+
+  def jointEntropy(col1: ColData, col2: ColData, delta: Double): Double = (col1, col2) match {
+    case (_:NominalColData, _:NominalColData) =>
+
+
   }
 
   /**
