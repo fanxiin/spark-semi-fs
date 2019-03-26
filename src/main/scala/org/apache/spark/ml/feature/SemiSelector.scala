@@ -99,7 +99,11 @@ class SemiSelector(override val uid: String)
     selected += currentSelected._1
     while (selected.size < $(numTopFeatures)) {
       val candidateCol = attrCol.filter(col => !selected.contains(col._1))
-      val previousCol = attrCol.filter(_._1 == currentSelected._1).first()
+      val previousCol = {
+        println("----> call first")
+        attrCol.filter(col => col._1 == currentSelected._1).first()
+      }
+      println("----> num partition "+candidateCol.getNumPartitions)
       val mis = neighborEntropy.mutualInformation(previousCol, candidateCol)
       mis.foreach { case (index, mi) => accumulateRedundancy(index) += mi }
       val selectedCounts = selected.size
