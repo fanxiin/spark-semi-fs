@@ -1,13 +1,13 @@
 package org.apache.spark.ml.feature
 
 import org.apache.hadoop.fs.Path
-import org.apache.spark.ml.attribute.{Attribute, AttributeGroup, NumericAttribute, UnresolvedAttribute}
+import org.apache.spark.ml.attribute.{Attribute, AttributeGroup, NumericAttribute}
 import org.apache.spark.ml.feature.SemiSelectorModel.SemiSelectorWriter
 import org.apache.spark.ml.{Estimator, Model}
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.param.shared.{HasFeaturesCol, HasLabelCol, HasOutputCol}
 import org.apache.spark.ml.util._
-import org.apache.spark.sql.{DataFrame, Dataset, Row}
+import org.apache.spark.sql.{DataFrame, Dataset}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.functions._
 import org.apache.spark.ml.linalg.{DenseVector, SparseVector, Vector, VectorUDT, Vectors}
@@ -35,6 +35,14 @@ private[feature] trait SemiSelectorParams extends Params
     "Number of partitions of algorithm.",
     ParamValidators.gtEq(1))
 
+  final val regression = new BooleanParam(this,"regression",
+  "Classification or regression")
+  setDefault(regression, false)
+
+  final val nominalIndices = new IntArrayParam(this, "nominalIndices",
+  "Nominal attribute indices")
+
+
   // TODO param of label missing value name
 }
 
@@ -56,11 +64,14 @@ class SemiSelector(override val uid: String)
 
   def setNumPartitions(value: Int): this.type = set(numPartitions, value)
 
+  def isRegression(value: Boolean): this.type = set(regression, value)
+
+  def setNominalIndices(value: Array[Int]): this.type = set(nominalIndices, value)
+
   override def fit(dataset: Dataset[_]): SemiSelectorModel = {
     transformSchema(dataset.schema)
     // if success, numAttributes well be None while attributes will contain info.
     val attributeGroup = AttributeGroup.fromStructField(dataset.schema($(featuresCol)))
-    // TODO dataset may have no metadae
     // TODO sparse data make column transform slower!
     // TODO get missing value info
     val label = Attribute.fromStructField(dataset.schema($(labelCol)))
@@ -76,20 +87,22 @@ class SemiSelector(override val uid: String)
 
     val numAttributes = attr.length
     setDefault(numPartitions, numAttributes)
-    val nominalIndices = attr.filter(_.isNominal).map(_.index.get).toSet
-    val rotatedData = NeighborEntropyHelper.rotateDFasRDD(data, $(numPartitions))
-    val bcNominalIndices = data.sparkSession.sparkContext.broadcast(nominalIndices)
-    val formattedData = NeighborEntropyHelper.formatData(rotatedData, bcNominalIndices)
+    val defaultNominalAttr = attr.filter(_.isNominal).map(_.index.get)
+    setDefault(nominalIndices, defaultNominalAttr)
+
+    val nominalSet: Set[Int] =
+      if($(regression)) $(nominalIndices).toSet
+      else $(nominalIndices).toSet + numAttributes
+
+    val bcNominalIndices = data.sparkSession.sparkContext.broadcast(nominalSet)
+    val formattedData = FormatConverter.convert(data, $(numPartitions), bcNominalIndices)
     formattedData.persist(StorageLevel.MEMORY_AND_DISK)
 
-    val attrCol = formattedData.filter(_._1 != numAttributes)
-    val classCol = formattedData.filter(_._1 == numAttributes).first
+    val attrCol = formattedData.filter(_.index != numAttributes)
+    val classCol = formattedData.filter(_.index == numAttributes).first
 
-    val neighborEntropy = new DistributeNeighborEntropy(
-      $(delta),
-      formattedData,
-      bcNominalIndices
-    )
+    val neighborEntropy = new DistributeNeighborEntropy($(delta), formattedData)
+
     val selected = new ArrayBuffer[Int]()
     // TODO implement a semi-supervised version
     // 这里可以创建一个Rdd过滤掉无类标数据
@@ -98,12 +111,8 @@ class SemiSelector(override val uid: String)
     var currentSelected = relevance.maxBy(_._2)
     selected += currentSelected._1
     while (selected.size < $(numTopFeatures)) {
-      val candidateCol = attrCol.filter(col => !selected.contains(col._1))
-      val previousCol = {
-        println("----> call first")
-        attrCol.filter(col => col._1 == currentSelected._1).first()
-      }
-      println("----> num partition "+candidateCol.getNumPartitions)
+      val candidateCol = attrCol.filter(col => !selected.contains(col.index))
+      val previousCol = attrCol.filter(col => col.index == currentSelected._1).first()
       val mis = neighborEntropy.mutualInformation(previousCol, candidateCol)
       mis.foreach { case (index, mi) => accumulateRedundancy(index) += mi }
       val selectedCounts = selected.size
@@ -117,7 +126,8 @@ class SemiSelector(override val uid: String)
     }
     // Broadcast should be removed after it is determined that it is no longer need(include a RDD recovery compute).
     bcNominalIndices.destroy()
-    println("---------->" + selected.mkString(","))
+    formattedData.unpersist()
+    println("feature selected------>" + selected.mkString(","))
     new SemiSelectorModel(uid, selected.toArray)
   }
 

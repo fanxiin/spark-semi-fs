@@ -71,7 +71,7 @@ object LocalNeighborEntropy {
     table.map(c => c * log2(c / len)).sum / len * -1
   }
 
-  def entropy(colData: ColData, delta: Double): Double ={
+  def entropy(colData: ColData, delta: Double): Double = colData match {
     case NumericalColData(_, v: DenseVector) => entropy(v.values, delta)
     case NumericalColData(_, v: SparseVector) =>
       entropy(v.values, delta)
@@ -89,7 +89,7 @@ object LocalNeighborEntropy {
     * @param numBins Number of bins to estimate the count.
     * @return estimate of neighbor entropy.
     */
-  def jointEntropy(data: Array[(Double, Double)], delta: Double, numBins: Int = 100000): Double = {
+  def pureNumJointEntropy(data: Array[(Double, Double)], delta: Double, numBins: Int = 100000): Double = {
     val len = data.length.toDouble
     val counts = estimateNeighborCounts(data, delta, numBins)
     counts.map(c => log2(c / len)).sum / len * -1
@@ -99,7 +99,7 @@ object LocalNeighborEntropy {
     * Compute the delta-neighbor joint entropy between nominal and numerical variable. Use infinite norm as the
     * measure of neighborhood relationship.The ordering of elements not guaranteed.
     *
-    * @param data    2-dimension data.
+    * @param data    2-dimension data. The first value is nominal value.
     * @param delta   The threshold of neighborhood relationship.
     * @return neighbor entropy.
     */
@@ -115,7 +115,7 @@ object LocalNeighborEntropy {
     * @param data    2-dimension data.
     * @return (neighbor) entropy.
     */
-  def jointEntropy(data: Array[(Double, Double)]): Double = {
+  def pureNomJointEntropy(data: Array[(Double, Double)]): Double = {
     val len = data.length.toDouble
     def max(a: Double, b: Double) = if (a > b) a else b
     val (maxX, maxY) = data.reduce[(Double,Double)]{
@@ -126,10 +126,15 @@ object LocalNeighborEntropy {
     contingency.flatten.map(c => c * log2(c / len)).sum / len * -1
   }
 
-  def jointEntropy(col1: ColData, col2: ColData, delta: Double): Double = (col1, col2) match {
-    case (_:NominalColData, _:NominalColData) =>
-
-
+  def jointEntropy(col1: ColData, col2: ColData, delta: Double): Double = (col1,col2) match {
+    case (c1: NominalColData, c2: NominalColData) =>
+      pureNomJointEntropy(c1.vector.toDense.values.zip(c2.vector.toDense.values))
+    case (c1: NominalColData, c2: NumericalColData) =>
+      mixJointEntropy(c1.vector.toDense.values.zip(c2.vector.toDense.values), delta)
+    case (c1: NumericalColData, c2: NominalColData) =>
+      mixJointEntropy(c2.vector.toDense.values.zip(c1.vector.toDense.values), delta)
+    case (c1: NumericalColData, c2: NumericalColData) =>
+      pureNumJointEntropy(c1.vector.toDense.values.zip(c2.vector.toDense.values), delta)
   }
 
   /**

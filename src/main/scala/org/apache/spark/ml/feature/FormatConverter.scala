@@ -1,7 +1,8 @@
 package org.apache.spark.ml.feature
 
+import org.apache.spark.Partitioner
 import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.ml.linalg.{DenseVector, Vector, SparseVector}
+import org.apache.spark.ml.linalg.{DenseVector, SparseVector, Vector}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.DataFrame
 
@@ -47,17 +48,6 @@ object FormatConverter {
       if(! bcNominalIndices.value.contains(pair._1)) pair._2 match {
         case v: DenseVector =>
           val values = v.values
-          val valMax = values.max
-          val valMin = values.min
-          val max = if (valMax < 0) 0 else valMax
-          val min = if (valMin > 0) 0 else valMin
-          val originScale = max - min
-          val newValues =
-            if (max > min) values.map(v => (v - min) / originScale)
-            else values
-          ColData.numerical(pair._1, new DenseVector(newValues))
-        case v: SparseVector =>
-          val values = v.values
           val max = values.max
           val min = values.min
           val originScale = max - min
@@ -66,6 +56,17 @@ object FormatConverter {
               values.map(v => (v - min) / originScale)
             else
               values
+          ColData.numerical(pair._1, new DenseVector(newValues))
+        case v: SparseVector =>
+          val values = v.values
+          val valMax = values.max
+          val valMin = values.min
+          val max = if (valMax < 0) 0 else valMax
+          val min = if (valMin > 0) 0 else valMin
+          val originScale = max - min
+          val newValues =
+            if (max > min) values.map(v => (v - min) / originScale)
+            else values
           ColData.numerical(pair._1, new SparseVector(v.size, v.indices, newValues))
       } else {
         ColData.nominal(pair._1, pair._2)
@@ -73,21 +74,33 @@ object FormatConverter {
     }
   }
 
+  def convert(
+      df: DataFrame,
+      numPartitions: Int,
+      bcNominalIndices: Broadcast[Set[Int]]): RDD[ColData] = {
+    formatData(rotateDens(df, numPartitions), bcNominalIndices)
+  }
+
 }
 
-/**
-  * Case of Column data
-  * @param index index of this column
-  * @param isNominal whether the attribute of this column is nominal
-  * @param vector value of this column
-  */
-trait ColData
+case class ColumnTransferKey(colIndex: Int, partIndex: Int)
+
+class ColumnTransferPartitioner(override val numPartitions: Int) extends Partitioner{
+  override def getPartition(key: Any): Int = {
+    val k = key.asInstanceOf[ColumnTransferKey]
+    k.colIndex % numPartitions
+  }
+}
+
+trait ColData {
+  def index: Int
+}
 
 object ColData{
   def numerical(index: Int, vector: Vector) = NumericalColData(index, vector)
   def nominal(index: Int, vector: Vector) = NominalColData(index, vector)
 }
 
-case class NumericalColData(index: Int, vector: Vector) extends ColData
+case class NumericalColData(override val index: Int, vector: Vector) extends ColData
 
-case class NominalColData(index: Int, vector: Vector) extends ColData
+case class NominalColData(override val index: Int, vector: Vector) extends ColData

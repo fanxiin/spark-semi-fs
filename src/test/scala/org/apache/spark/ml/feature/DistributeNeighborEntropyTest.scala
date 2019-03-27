@@ -36,15 +36,15 @@ class DistributeNeighborEntropyTest extends FunSuite with BeforeAndAfterAll {
     val rf1 = new RFormula().setFormula("l ~ x + id + y").fit(test)
     val cleanedTest = rf1.transform(test).select("label", "features").repartition(4)
     cleanedTest.show()
-    val rot = NeighborEntropyHelper.rotateDFasRDD(cleanedTest,3)
+    val rot = FormatConverter.rotateDens(cleanedTest,3)
 //    rot.foreach{case (i, array) => println(i+" "+array.mkString("[",",","]"))}
 
     rot.collectPartitions().foreach(a=>{
-      a.foreach(pair=>println(pair._1 +"\t"+ pair._2.mkString(",")))
+      a.foreach(pair=>println(pair._1 +"\t"+ pair._2.toDense.values.mkString(",")))
       println("-")
     })
     println("0-> " + rot.first())
-    val result = rot.collect.toMap
+    val result = rot.collect.map(p=>(p._1,p._2.toDense.values)).toMap
     assert(result.getOrElse(0, Array(0)).zip(result.getOrElse(1, Array(1))).forall(v => v._1==v._2))
   }
 
