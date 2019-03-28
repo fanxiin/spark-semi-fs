@@ -3,6 +3,7 @@ package org.apache.spark.ml.feature
 import org.apache.spark.ml.feature.LocalNeighborEntropy._
 import org.scalatest.{BeforeAndAfterAll, FunSuite}
 import util.Random._
+import org.apache.spark.ml.linalg.Vectors
 
 class LocalNeighborEntropyTest extends FunSuite with BeforeAndAfterAll{
   final val FILE_PREFIX = "src/test/resources/data/"
@@ -56,8 +57,61 @@ class LocalNeighborEntropyTest extends FunSuite with BeforeAndAfterAll{
     val labelString = dataArray.map(_.last)
     val labelValue = Set(labelString: _*).zipWithIndex.toMap
     val label = labelString.map(labelValue(_))
-    val values = dataArray.map(d=>d(2).toDouble)
+    val values = dataArray.map(d=>d(6).toDouble)//.map(_=>scala.util.Random.nextDouble())
+    val first = scale(values)
+    val pairs = first.zip(label.map(_.toDouble))
+    val mi = exactNMI(first.zip(label.map(_.toDouble)), 0.1)
+    println(mi)
 
+    val ex = entropy(first, 0.1)
+
+    val colx = ColData.numerical(1,Vectors.dense(values).toSparse,values.max,values.min)
+    val sex = sparseEntropy(colx,0.1)
+    println("sex  "+sex)
+    println("ex   "+ex)
+    val ey = entropy(label.map(_.toDouble), 0.1)
+    val exy = pureNumJointEntropy(first.zip(label.map(_.toDouble)), 0.1)
+    println(ex+ey-exy)
+  }
+
+  test("ionosphere_sparse") {
+    val dataLine = scala.io.Source.fromFile(FILE_PREFIX + "ionosphere.csv").getLines()
+    val dataArray = dataLine.map(_.split(",")).toArray.tail
+    val labelString = dataArray.map(_.last)
+    val labelValue = Set(labelString: _*).zipWithIndex.toMap
+    val label = labelString.map(labelValue(_))
+    val v1 = dataArray.map(d=>d(9).toDouble)//.map(_=>scala.util.Random.nextDouble())
+    val v2 = dataArray.map(d=>d(6).toDouble)//.map(_=>scala.util.Random.nextDouble())
+
+    val (t1,t2) = {
+      val tmp = v1.zip(v2).filter(p=> p._2 != 0 || p._1 != 0).sortBy(_._1)
+      (tmp ++ Array.fill(0)((0.0,0.0))).unzip
+    }
+    val before =scale(t1).zip(scale(t2))
+
+    def generateData(v: Array[Double]) =
+      ColData.numerical(1,Vectors.dense(v).toSparse,v.max,v.min)
+    val scol1 = generateData(t1)
+    val scol2 = generateData(t2)
+
+    val delta = 0.1
+    val time1 = System.currentTimeMillis
+    val sje = sparsePureNumJointEntropy(scol1,scol2,delta)
+    val time2 = System.currentTimeMillis
+//    val je = exactNJE(scale(t1).zip(scale(t2)),delta)
+    val time3 = System.currentTimeMillis
+    val dje = pureNumJointEntropy(before, delta)
+    val time4 = System.currentTimeMillis
+    println("sje\t"+sje)
+//    println("je\t"+je)
+    println("dje\t"+dje)
+    println(time2-time1)
+    println(time3-time2)
+    println(time4-time3)
+
+  }
+
+  def scale(values: Array[Double]) = {
     val max = values.max
     val min = values.min
     val originScale = max - min
@@ -66,16 +120,6 @@ class LocalNeighborEntropyTest extends FunSuite with BeforeAndAfterAll{
         values.map(v => (v - min) / originScale)
       else
         values
-
-
-    val pairs = first.zip(label.map(_.toDouble))
-
-    val mi = exactNMI(first.zip(label.map(_.toDouble)), 0.1)
-    println(mi)
-
-    val ex = entropy(first, 0.1)
-    val ey = entropy(label.map(_.toDouble), 0.1)
-    val exy = pureNumJointEntropy(first.zip(label.map(_.toDouble)), 0.1)
-    println(ex+ey-exy)
+    first
   }
 }

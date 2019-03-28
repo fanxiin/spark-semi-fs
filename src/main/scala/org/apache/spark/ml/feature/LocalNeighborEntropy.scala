@@ -33,6 +33,39 @@ object LocalNeighborEntropy {
     counts
   }
 
+  private def sparseNeighborCounts(colData: NumericalColData, delta: Double): (Array[Int],(Int,Int)) = {
+    val scaledDelta = delta * (colData.max - colData.min)
+    val vector = colData.vector.asInstanceOf[SparseVector]
+    val values = vector.values
+    val numZeros = vector.size - values.length
+    val sortedValues = values.sorted
+    val len = sortedValues.length
+    var i, j, counter = 0
+    var upperValue = sortedValues.head - scaledDelta
+    var lowerValue = sortedValues.head + scaledDelta
+    var zeroNeighborCount = numZeros
+    val counts = for (v <- sortedValues)
+      yield {
+        upperValue = v + scaledDelta
+        lowerValue = v - scaledDelta
+        while (sortedValues(i) < lowerValue) {
+          i += 1
+          counter -= 1
+        }
+        while (j < len && sortedValues(j) < upperValue) {
+          j += 1
+          counter += 1
+        }
+        if (0.0 < v+scaledDelta && 0.0 > v-scaledDelta){
+          zeroNeighborCount += 1
+          counter + numZeros
+        }
+        else
+          counter
+      }
+    (counts, (numZeros, zeroNeighborCount))
+  }
+
   def countNeighborCountOrigin(values: Array[Double], delta: Double): Array[Int] = {
     values.map(v => {
       values.count(t => Math.abs(v - t) < delta)
@@ -71,9 +104,15 @@ object LocalNeighborEntropy {
     table.map(c => c * log2(c / len)).sum / len * -1
   }
 
+  def sparseEntropy(col: NumericalColData, delta: Double):Double = {
+    val len = col.vector.size.toDouble
+    val (counts, (numZero, zeroNeighborCount)) = sparseNeighborCounts(col, delta)
+    (counts.map(c => log2(c / len)).sum + log2(zeroNeighborCount / len) * numZero) / len * -1
+  }
+
   def entropy(colData: ColData, delta: Double): Double = colData match {
-    case NumericalColData(_, v: DenseVector) => entropy(v.values, delta)
-    case NumericalColData(_, v: SparseVector) =>
+    case NumericalColData(_, v: DenseVector, _, _) => entropy(v.values, delta)
+    case NumericalColData(_, v: SparseVector,_, _) =>
       entropy(v.values, delta)
     case NominalColData(_, v: DenseVector) => entropy(v.values)
     case NominalColData(_, v: SparseVector) =>
@@ -93,6 +132,12 @@ object LocalNeighborEntropy {
     val len = data.length.toDouble
     val counts = estimateNeighborCounts(data, delta, numBins)
     counts.map(c => log2(c / len)).sum / len * -1
+  }
+
+  def sparsePureNumJointEntropy(col1: NumericalColData, col2: NumericalColData, delta: Double, numBins: Int = 100000):Double = {
+    val len = col1.vector.size.toDouble
+    val (counts, (numZero, zeroNeighborCount)) = sparseEstimateNeighborCounts(col1, col2, delta, numBins)
+    (counts.map(c => log2(c / len)).sum + log2(zeroNeighborCount / len) * numZero) / len * -1
   }
 
   /**
@@ -182,9 +227,74 @@ object LocalNeighborEntropy {
         for (k <- lowerOfBin to upperOfBin) bins(k) -= 1
         i += 1
       }
+
       val approximateBin = math.round(pair._2 * numBins).toInt
       bins(approximateBin)
     }
+  }
+
+
+  private def sparseEstimateNeighborCounts(
+      col1: NumericalColData,
+      col2: NumericalColData,
+      delta: Double,
+      numBins: Int): (Array[Int],(Int,Int))= {
+    //    require((1 / precision % 1) == 0)
+    val vector1 = col1.vector.asInstanceOf[SparseVector]
+    val vector2 = col2.vector.asInstanceOf[SparseVector]
+    val map1 = vector1.indices.zip(vector1.values).toMap
+    val map2 = vector2.indices.zip(vector2.values).toMap
+    val len1 = col1.max - col1.min
+    val len2 = col2.max - col2.min
+    val minY = col2.min
+    val (scaledDelta1, scaledDelta2)  = (len1 * delta,len2 * delta)
+    val zippedIndices = (vector1.indices ++ vector2.indices).distinct
+
+    val data = zippedIndices.map(index=> (map1.getOrElse(index,0.0), map2.getOrElse(index, 0.0)))
+    val numZeros = vector1.size - data.length
+    var zeroNeighborCount = numZeros
+    val len = data.length
+    val bins = Array.ofDim[Int](numBins + 1)
+    val sortedPairs = data.sortBy(_._1)
+    var i, j = 0
+    val counts = for (pair <- sortedPairs) yield {
+      val upper = pair._1 + scaledDelta1
+      val lower = pair._1 - scaledDelta1
+      while (j < len && sortedPairs(j)._1 < upper) {
+        val relativeY = sortedPairs(j)._2 - minY
+        val lowerOfBin = {
+          val tmp = ((relativeY - scaledDelta2)  / len2 * numBins).toInt + 1
+          if (tmp < 0) 0 else tmp
+        }
+        val upperOfBin = {
+          val tmp = ((relativeY + scaledDelta2)  / len2 * numBins).toInt + 1
+          if (tmp < numBins) tmp else numBins
+        }
+        // Because the last index of bin is numBins(length of bins is numBins+1).
+        for (k <- lowerOfBin to upperOfBin) bins(k) += 1
+        j += 1
+      }
+      while (sortedPairs(i)._1 < lower) {
+        val relativeY = sortedPairs(i)._2 - minY
+        val lowerOfBin = {
+          val tmp = ((relativeY - scaledDelta2)  / len2 * numBins).toInt + 1
+          if (tmp < 0) 0 else tmp
+        }
+        val upperOfBin = {
+          val tmp = ((relativeY + scaledDelta2)  / len2 * numBins).toInt + 1
+          if (tmp < numBins) tmp else numBins
+        }
+        for (k <- lowerOfBin to upperOfBin) bins(k) -= 1
+        i += 1
+      }
+      val approximateBin = math.round((pair._2 - minY) / len2 * numBins).toInt
+      if (math.abs(pair._1) <= scaledDelta1 && math.abs(pair._2) <= scaledDelta2){
+        zeroNeighborCount += 1
+        bins(approximateBin) + numZeros
+      } else
+        bins(approximateBin)
+    }
+    (counts, (numZeros, zeroNeighborCount))
   }
 
   def exactNeighborCounts(paris: Array[(Double, Double)], delta: Double): Array[Int] = {

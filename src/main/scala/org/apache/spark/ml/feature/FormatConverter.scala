@@ -50,24 +50,14 @@ object FormatConverter {
           val values = v.values
           val max = values.max
           val min = values.min
-          val originScale = max - min
-          val newValues =
-            if (max > min)
-              values.map(v => (v - min) / originScale)
-            else
-              values
-          ColData.numerical(pair._1, new DenseVector(newValues))
+          ColData.numerical(pair._1, pair._2, max, min)
         case v: SparseVector =>
           val values = v.values
           val valMax = values.max
           val valMin = values.min
           val max = if (valMax < 0) 0 else valMax
           val min = if (valMin > 0) 0 else valMin
-          val originScale = max - min
-          val newValues =
-            if (max > min) values.map(v => (v - min) / originScale)
-            else values
-          ColData.numerical(pair._1, new SparseVector(v.size, v.indices, newValues))
+          ColData.numerical(pair._1, pair._2, max, min)
       } else {
         ColData.nominal(pair._1, pair._2)
       }
@@ -97,10 +87,15 @@ trait ColData {
 }
 
 object ColData{
-  def numerical(index: Int, vector: Vector) = NumericalColData(index, vector)
+  def numerical(index: Int, vector: Vector, max: Double, min: Double) =
+    NumericalColData(index, vector, max, min)
   def nominal(index: Int, vector: Vector) = NominalColData(index, vector)
 }
 
-case class NumericalColData(override val index: Int, vector: Vector) extends ColData
+case class NumericalColData(
+    override val index: Int,
+    vector: Vector,
+    max: Double,
+    min: Double) extends ColData
 
 case class NominalColData(override val index: Int, vector: Vector) extends ColData
