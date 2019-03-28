@@ -84,6 +84,7 @@ class ColumnTransferPartitioner(override val numPartitions: Int) extends Partiti
 
 trait ColData {
   def index: Int
+  def vector: Vector
 }
 
 object ColData{
@@ -94,8 +95,8 @@ object ColData{
 
 case class NumericalColData(
     override val index: Int,
-    vector: Vector,
+    override val vector: Vector,
     max: Double,
     min: Double) extends ColData
 
-case class NominalColData(override val index: Int, vector: Vector) extends ColData
+case class NominalColData(override val index: Int, override val vector: Vector) extends ColData
