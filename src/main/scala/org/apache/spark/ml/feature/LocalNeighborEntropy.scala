@@ -118,7 +118,7 @@ private object LocalDensNeighborEntropy extends LocalNeighborEntropy {
 
 
   def entropy(colData: ColData, delta: Double): Double = colData match {
-    case NumericalColData(_, v: DenseVector, _, _) => entropy(v.values, delta)
+    case NumericalColData(_, v: DenseVector, max, min) => entropy(v.values, delta*(max-min))
     case NominalColData(_, v: DenseVector) => entropy(v.values)
   }
 
@@ -147,10 +147,11 @@ private object LocalDensNeighborEntropy extends LocalNeighborEntropy {
     * @return neighbor entropy.
     */
   def mixJointEntropy(col1: NominalColData, col2: NumericalColData, delta: Double): Double = {
+    val scaledDelta = delta * (col2.max - col2.min)
     val size = col1.vector.size.toDouble
     val data = zipDens(col1, col2)
     val groupedData = data.groupBy(_._1).map(_._2.unzip._2)
-    groupedData.flatMap(neighborCounts(_, delta)).map(c => log2( c / size)).sum / size * -1
+    groupedData.flatMap(neighborCounts(_, scaledDelta)).map(c => log2( c / size)).sum / size * -1
   }
 
   /**

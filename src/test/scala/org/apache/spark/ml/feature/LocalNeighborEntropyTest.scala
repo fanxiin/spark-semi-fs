@@ -80,7 +80,7 @@ class LocalNeighborEntropyTest extends FunSuite with BeforeAndAfterAll{
     val labelString = dataArray.map(_.last)
     val labelValue = Set(labelString: _*).zipWithIndex.toMap
     val v2 = labelString.map(labelValue(_)).map(_.toDouble)
-    val v1 = dataArray.map(d=>d(0).toDouble)//.map(_=>scala.util.Random.nextDouble())
+    val v1 = dataArray.map(d=>d(1).toDouble)//.map(_=>scala.util.Random.nextDouble())
 //    val v2 = dataArray.map(d=>d(6).toDouble)//.map(_=>scala.util.Random.nextDouble())
 
     val (t1,t2) = {
@@ -93,10 +93,9 @@ class LocalNeighborEntropyTest extends FunSuite with BeforeAndAfterAll{
       ColData.numerical(1,Vectors.dense(v).toSparse,v.max,v.min)
     val scol1 = generateData(t1)
     val scol2 = generateData(t2)
-    def generateData1(v: Array[Double]) =
-      ColData.nominal(1,Vectors.dense(v))
+
     val scol11 = ColData.numerical(1,Vectors.dense(t1),t1.max,t1.min)
-    val scol21 = generateData1(t2)
+    val scol21 = ColData.nominal(1,Vectors.dense(t2))
     val delta = 0.1
     val time1 = System.currentTimeMillis
     val sje = jointEntropy(scol1,scol2,delta)
@@ -111,6 +110,15 @@ class LocalNeighborEntropyTest extends FunSuite with BeforeAndAfterAll{
     println(time2-time1)
     println(time3-time2)
     println(time4-time3)
+    val se = entropy(scol1,delta)
+    val de = entropy(scol11,delta)
+    println(se+"\t"+de)
+
+
+    val smi = entropy(scol1, delta) + entropy(scol2, delta) - sje
+    val dmi = entropy(scol11, delta) + entropy(scol21, delta) - dje
+    println(smi)
+    println(dmi)
 
   }
 
