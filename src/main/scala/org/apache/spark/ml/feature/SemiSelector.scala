@@ -42,6 +42,10 @@ private[feature] trait SemiSelectorParams extends Params
   final val nominalIndices = new IntArrayParam(this, "nominalIndices",
   "Nominal attribute indices")
 
+  final val sparse = new BooleanParam(this, "sparse",
+  "Dataset is a sparse data.")
+  setDefault(sparse, false)
+
 
   // TODO param of label missing value name
 }
@@ -68,11 +72,12 @@ class SemiSelector(override val uid: String)
 
   def setNominalIndices(value: Array[Int]): this.type = set(nominalIndices, value)
 
+  def isSparse(value: Boolean): this.type = set(sparse, value)
+
   override def fit(dataset: Dataset[_]): SemiSelectorModel = {
     transformSchema(dataset.schema)
     // if success, numAttributes well be None while attributes will contain info.
     val attributeGroup = AttributeGroup.fromStructField(dataset.schema($(featuresCol)))
-    // TODO sparse data make column transform slower!
     // TODO get missing value info
     val label = Attribute.fromStructField(dataset.schema($(labelCol)))
     // transform origin data into dataset can be handle by DistributeNeighborEntropy.
@@ -95,7 +100,11 @@ class SemiSelector(override val uid: String)
       else $(nominalIndices).toSet + numAttributes
 
     val bcNominalIndices = data.sparkSession.sparkContext.broadcast(nominalSet)
-    val formattedData = FormatConverter.convert(data, $(numPartitions), bcNominalIndices)
+    // 稀疏模式下全零列将被直接去掉，因为map阶段的输出需要存在value，reduce时才有值
+    val formattedData =
+      if($(sparse)) FormatConverter.convertSparse(data, numAttributes, $(numPartitions), bcNominalIndices)
+      else FormatConverter.convertDens(data, numAttributes, $(numPartitions), bcNominalIndices)
+
     formattedData.persist(StorageLevel.MEMORY_AND_DISK)
 
     val attrCol = formattedData.filter(_.index != numAttributes)

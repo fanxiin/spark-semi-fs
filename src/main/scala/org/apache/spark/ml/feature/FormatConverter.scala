@@ -6,6 +6,8 @@ import org.apache.spark.ml.linalg.{DenseVector, SparseVector, Vector}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.DataFrame
 
+import scala.collection.mutable.ArrayBuffer
+
 object FormatConverter {
   /**
     * Convert DataFrame into a column form RDD[(Int, Array[Double])]. First element of tuple is index of column,
@@ -14,12 +16,12 @@ object FormatConverter {
     * @param numPartitions Number of result's partition.
     * @return Column RDD
     */
-  def rotateDens(df: DataFrame, numPartitions: Int): RDD[(Int, Vector)] = {
-    val numAttributes = df.first().getAs[Vector](1).size + 1
+  def rotateDens(df: DataFrame, numAttributes: Int, numPartitions: Int): RDD[(Int, Vector)] = {
+//    val numAttributes = df.first().getAs[Vector](1).size + 1
     val columnarRDD = df.rdd.mapPartitionsWithIndex{ case (pIndex, iter) =>
       val rows = iter.toArray
       println("pId: "+ pIndex +" --------------->" + numAttributes + " * " + rows.length)
-      val mat = Array.ofDim[Double](numAttributes, rows.length)
+      val mat = Array.ofDim[Double](numAttributes + 1, rows.length)
       var j = 0
       for (row <- rows) {
         val dv = row.getAs[Vector](1).toDense
@@ -28,7 +30,7 @@ object FormatConverter {
         mat(dv.size)(j) = label
         j += 1
       }
-      val chunks = for (i <- 0 until numAttributes) yield (ColumnTransferKey(i, pIndex), mat(i)) //不使用三元组节省减小传输时间？
+      val chunks = for (i <- 0 to numAttributes) yield (ColumnTransferKey(i, pIndex), mat(i)) //不使用三元组节省减小传输时间？
       chunks.toIterator
     }
     implicit def orderByColumnTransferKey[A <: ColumnTransferKey] : Ordering[A] =
@@ -38,9 +40,31 @@ object FormatConverter {
         iter.toArray.groupBy(_._1.colIndex).map(v =>(v._1, new DenseVector(v._2.flatMap(_._2)))).toIterator)
   }
 
-  def rotateSparse(df: DataFrame, numPartitions: Int): RDD[(Int, Vector)] = {
+  def rotateSparse(df: DataFrame, numAttributes: Int, numPartitions: Int): RDD[(Int, Vector)] = {
+    val size = df.count.toInt
+    val columnarRDD = df.rdd.zipWithIndex.flatMap { case (row, rIndex) =>
+      val sv = row.getAs[Vector](1).toSparse
+      val label = row.getDouble(0)
+      val indices = sv.indices
+      val values = sv.values
+      val buffer = new ArrayBuffer[(ColumnTransferKey, Double)](sv.indices.length)
+      for (i <- 0 until indices.length)
+        buffer += ((new ColumnTransferKey(sv.indices(i), rIndex ), sv.values(i)))
+      buffer += ((new ColumnTransferKey(numAttributes, rIndex ), label))
+      buffer.toIterator
+    }
+    implicit def orderByColumnTransferKey[A <: ColumnTransferKey] : Ordering[A] =
+      Ordering.by(k => (k.colIndex, k.partIndex))
 
-    ???
+    def mkSparse(info: Array[(ColumnTransferKey, Double)]): SparseVector = {
+      val (key, values) = info.unzip
+      val indices = key.map(_.partIndex.toInt)
+      new SparseVector(size, indices, values)
+    }
+    columnarRDD.repartitionAndSortWithinPartitions(new ColumnTransferPartitioner(numPartitions))
+      .mapPartitions(iter =>
+        iter.toArray.groupBy(_._1.colIndex)
+          .map(v =>(v._1, mkSparse(v._2))).toIterator)
   }
 
   def formatData(data: RDD[(Int, Vector)], bcNominalIndices: Broadcast[Set[Int]]): RDD[ColData] = {
@@ -64,16 +88,24 @@ object FormatConverter {
     }
   }
 
-  def convert(
+  def convertDens(
       df: DataFrame,
+      numAttributes: Int,
       numPartitions: Int,
       bcNominalIndices: Broadcast[Set[Int]]): RDD[ColData] = {
-    formatData(rotateDens(df, numPartitions), bcNominalIndices)
+    formatData(rotateDens(df, numAttributes, numPartitions), bcNominalIndices)
   }
 
+  def convertSparse(
+      df: DataFrame,
+      numAttributes: Int,
+      numPartitions: Int,
+      bcNominalIndices: Broadcast[Set[Int]]): RDD[ColData] = {
+    formatData(rotateSparse(df, numAttributes, numPartitions), bcNominalIndices)
+  }
 }
 
-case class ColumnTransferKey(colIndex: Int, partIndex: Int)
+case class ColumnTransferKey(colIndex: Int, partIndex: Long)
 
 class ColumnTransferPartitioner(override val numPartitions: Int) extends Partitioner{
   override def getPartition(key: Any): Int = {
@@ -81,6 +113,13 @@ class ColumnTransferPartitioner(override val numPartitions: Int) extends Partiti
     k.colIndex % numPartitions
   }
 }
+//
+//class ExactPartitioner(override val numPartitions: Int) extends Partitioner {
+//  override def getPartition(key: Any): Int = {
+//    val k = key.asInstanceOf[Long]
+//    k % numPartitions
+//  }
+//}
 
 trait ColData {
   def index: Int

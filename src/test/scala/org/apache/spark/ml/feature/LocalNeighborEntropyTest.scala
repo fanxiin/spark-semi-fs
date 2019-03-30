@@ -79,47 +79,57 @@ class LocalNeighborEntropyTest extends FunSuite with BeforeAndAfterAll{
     val dataArray = dataLine.map(_.split(",")).toArray.tail
     val labelString = dataArray.map(_.last)
     val labelValue = Set(labelString: _*).zipWithIndex.toMap
-    val v2 = labelString.map(labelValue(_)).map(_.toDouble)
-    val v1 = dataArray.map(d=>d(1).toDouble)//.map(_=>scala.util.Random.nextDouble())
-//    val v2 = dataArray.map(d=>d(6).toDouble)//.map(_=>scala.util.Random.nextDouble())
-
+//    val v2 = labelString.map(labelValue(_)).map(_.toDouble)
+    val v1 = dataArray.map(d=>d(4).toDouble)//.map(_=>scala.util.Random.nextDouble())
+    val v2 = dataArray.map(d=>d(1).toDouble)//.map(_=>scala.util.Random.nextDouble())
+    import scala.util.Random
     val (t1,t2) = {
       val tmp = v1.zip(v2)//.filter(p=> p._2 != 0 || p._1 != 0).sortBy(_._1)
-      (tmp ++ Array.fill(0)((0.0,0.0))).unzip
+      (tmp ++
+        Array.fill(0)((Random.nextDouble(),Random.nextDouble().toInt.toDouble)) ++
+        Array.fill(0)((0.0,0.0))).unzip
     }
     val before =scale(t1).zip(scale(t2))
 
     def generateData(v: Array[Double]) =
-      ColData.numerical(1,Vectors.dense(v).toSparse,v.max,v.min)
+      ColData.numerical(1,Vectors.dense(v),v.max,v.min)
     val scol1 = generateData(t1)
     val scol2 = generateData(t2)
 
-    val scol11 = ColData.numerical(1,Vectors.dense(t1),t1.max,t1.min)
-    val scol21 = ColData.nominal(1,Vectors.dense(t2))
+//    val scol11 = ColData.numerical(1,Vectors.dense(t1),t1.max,t1.min)
+//    val scol21 = ColData.nominal(1,Vectors.dense(t2))
     val delta = 0.1
+
+    val se = entropy(scol1,delta)
+    val de = entropy(scol1,delta)
+    println(se+"\t"+de)
+
     val time1 = System.currentTimeMillis
     val sje = jointEntropy(scol1,scol2,delta)
+//    val dje = jointEntropy(scol11, scol21, delta)
     val time2 = System.currentTimeMillis
-//    val je = exactNJE(scale(t1).zip(scale(t2)),delta)
+    val je = LocalDensNeighborEntropy.exactNJE(scale(t1).zip(scale(t2)),delta)
     val time3 = System.currentTimeMillis
-    val dje = jointEntropy(scol11, scol21, delta)
+//    val sje = jointEntropy(scol1,scol2,delta)
+    val dje = jointEntropy(scol1, scol2, delta)
     val time4 = System.currentTimeMillis
     println("sje\t"+sje)
-//    println("je\t"+je)
+    println("je\t"+je)
     println("dje\t"+dje)
     println(time2-time1)
     println(time3-time2)
     println(time4-time3)
-    val se = entropy(scol1,delta)
-    val de = entropy(scol11,delta)
-    println(se+"\t"+de)
+
 
 
     val smi = entropy(scol1, delta) + entropy(scol2, delta) - sje
-    val dmi = entropy(scol11, delta) + entropy(scol21, delta) - dje
+    val dmi = entropy(scol1, delta) + entropy(scol2, delta) - dje
+    val e1 = LocalDensNeighborEntropy.entropy(scale(t1), delta)
+    val e2 = LocalDensNeighborEntropy.entropy(scale(t2), delta)
+    val mi = e1 + e2 - je
     println(smi)
     println(dmi)
-
+    println(mi)
   }
 
   def scale(values: Array[Double]) = {
