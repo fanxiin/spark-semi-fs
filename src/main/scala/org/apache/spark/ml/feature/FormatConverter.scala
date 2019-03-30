@@ -2,9 +2,11 @@ package org.apache.spark.ml.feature
 
 import org.apache.spark.Partitioner
 import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.ml.attribute.{Attribute, NominalAttribute}
 import org.apache.spark.ml.linalg.{DenseVector, SparseVector, Vector}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.functions.{col, udf}
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -102,6 +104,32 @@ object FormatConverter {
       numPartitions: Int,
       bcNominalIndices: Broadcast[Set[Int]]): RDD[ColData] = {
     formatData(rotateSparse(df, numAttributes, numPartitions), bcNominalIndices)
+  }
+}
+
+object SemiHelper{
+  def tag(
+      data: DataFrame,
+      label: String,
+      ratio: Double,
+      missingName: String): DataFrame = {
+
+    val originAttr = Attribute.fromStructField(data.schema(label)).asInstanceOf[NominalAttribute]
+    val name = originAttr.name
+    val index = originAttr.index
+    val isOrdinal = originAttr.isOrdinal
+    val numValues = originAttr.numValues.map(_+1)
+    val values = originAttr.values.map(_ :+ missingName)
+    val newAttr = new NominalAttribute(name, index, isOrdinal, numValues, values)
+    val missingIndex = values.get.length - 1
+    val randomTag = udf { label: Double =>
+      if (scala.util.Random.nextDouble() < ratio)
+        label
+      else
+        missingIndex
+    }
+    // 一定要在之后持久化，否则从新计算随机数会不同
+    data.withColumn(label, randomTag(col(label)), newAttr.toMetadata())
   }
 }
 

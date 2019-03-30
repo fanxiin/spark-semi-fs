@@ -455,19 +455,21 @@ private object LocalSparseNeighborEntropy extends LocalNeighborEntropy {
     val data = zipSparseCol(col1, col2)
     val numZeros = col1.vector.size - data.length
     val groupedData = data.groupBy(_._1)
+    // semi-supervised data may not have 0
     val firstNoneZeroData = (groupedData - 0).map(_._2.unzip._2)
-    val firstZeroData = groupedData(0).map(_._2).sorted
-
-    var zeroNeighborCount = numZeros
-    val firstZeroDataCounts = neighborCounts(firstZeroData, scaledDelta)
-    for (i <- firstZeroData.indices) {
-      if (math.abs(firstZeroData(i)) <= scaledDelta){
-        zeroNeighborCount += 1
-        firstZeroDataCounts(i) += numZeros
+    val zeroPart = if (groupedData.contains(0)){
+      val firstZeroData = groupedData(0).map(_._2).sorted
+      var zeroNeighborCount = numZeros
+      val firstZeroDataCounts = neighborCounts(firstZeroData, scaledDelta)
+      for (i <- firstZeroData.indices) {
+        if (math.abs(firstZeroData(i)) <= scaledDelta){
+          zeroNeighborCount += 1
+          firstZeroDataCounts(i) += numZeros
+        }
       }
-    }
+      firstZeroDataCounts.map(c => log2( c / size)).sum + numZeros * log2(zeroNeighborCount / size)
+    } else 0.0
     val noneZeroPart = firstNoneZeroData.flatMap(neighborCounts(_, scaledDelta)).map(c => log2( c / size)).sum
-    val zeroPart = firstZeroDataCounts.map(c => log2( c / size)).sum + numZeros * log2(zeroNeighborCount / size)
     (noneZeroPart + zeroPart) / size * -1
   }
 

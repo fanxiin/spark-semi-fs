@@ -1,10 +1,10 @@
 package pers.xin.main
 
 import org.apache.hadoop.fs.Path
-import org.apache.spark.ml.feature.{NmiSelector, SemiSelector, StringIndexer, VectorAssembler}
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.ml.feature.SemiSelector
+import org.apache.spark.sql.SparkSession
 
-object ProcessData {
+object ProcessSemiData {
 
   def main(args: Array[String]): Unit = {
     val spark = SparkSession.builder()
@@ -23,7 +23,7 @@ object ProcessData {
       case _ => throw new IllegalArgumentException(s"bat format ${args(1)}")
     }
 
-    val selector = new NmiSelector()
+    val selector = new SemiSelector()
       .setDelta(args(2).toDouble)
       .setNumTopFeatures(args(3).toInt)
       .setOutputCol("selected")

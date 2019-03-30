@@ -3,8 +3,9 @@ package org.apache.spark.ml.feature
 import org.apache.spark.rdd.RDD
 
 class DistributeNeighborEntropy(
+    dataset: RDD[ColData],
     val delta: Double,
-    dataset: RDD[ColData]) {
+    numBins: Int = 10000) {
   private val sc = dataset.context
   val entropyMap: Map[Int, Double] = entropyArray(dataset).toMap
 
@@ -27,9 +28,10 @@ class DistributeNeighborEntropy(
       col: ColData,
       colSet: RDD[ColData]): Array[(Int, Double)] = {
     val delta_ = delta
+    val numBins_ = numBins
     val col_ = sc.broadcast(col)
     val entropyRdd = colSet.map{ that =>
-      (that.index, LocalNeighborEntropy.jointEntropy(col_.value, that, delta_))
+      (that.index, LocalNeighborEntropy.jointEntropy(col_.value, that, delta_, numBins_))
     }
     val result = entropyRdd.collect()
     col_.destroy()
